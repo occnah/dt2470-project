@@ -1,8 +1,15 @@
+"""
+Quantization conditions.
+
+TODO: uses a single constant tempo (get_bpm); switch to the tempo-map
+grid in src.common.midi before generating the real conditions.
+"""
+
 import copy
 
 import pretty_midi
 
-from dataset import get_bpm
+from src.common.midi import get_bpm
 
 
 def get_grid_size_seconds(bpm: float, subdivision: int) -> float:

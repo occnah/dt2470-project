@@ -1,12 +1,13 @@
+"""Groove MIDI Dataset metadata (info.csv) loading and filtering."""
+
 from pathlib import Path
 
 import pandas as pd
-import pretty_midi
 
-DEFAULT_ROOT = Path("data/groove")
+from src.common.config import RAW_DIR
 
 
-def load_info(root: Path = DEFAULT_ROOT) -> pd.DataFrame:
+def load_info(root: Path = RAW_DIR) -> pd.DataFrame:
     """
     Load the Groove MIDI Dataset metadata (info.csv).
 
@@ -37,19 +38,3 @@ def filter_info(
         info = info[info["time_signature"] == time_signature]
 
     return info
-
-
-def get_bpm(midi: pretty_midi.PrettyMIDI) -> float:
-    """
-    Return the tempo stored in the MIDI file.
-
-    Groove MIDI files contain exactly one tempo event, which is the click
-    tempo the drummer played to. This is far more reliable than
-    `estimate_tempo()`, which typically returns double the real tempo.
-    """
-    _, tempi = midi.get_tempo_changes()
-
-    if len(tempi) != 1:
-        raise ValueError(f"Expected a single tempo, found {len(tempi)}")
-
-    return float(tempi[0])
