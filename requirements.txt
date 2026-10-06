@@ -1,0 +1,7 @@
+pretty_midi
+mido
+numpy
+pandas
+matplotlib
+scikit-learn
+pytest
