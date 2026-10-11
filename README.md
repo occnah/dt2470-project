@@ -6,6 +6,7 @@ humanized versions? Data: Groove MIDI Dataset (GMD).
 Current stage: **matched conditions** — two-bar clips of the original performances,
 five timing-quantized versions, and independent velocity normalization.
 See [CODE_EXPLAINER.md](CODE_EXPLAINER.md) for the pipeline and table columns.
+The checked dataset summary and plots are in [results/DATASET_CHECKS.md](results/DATASET_CHECKS.md).
 
 ## Layout
 
@@ -22,6 +23,7 @@ src/
   features/
     magnitude.py         timing / IOI / velocity features
 tests/                   synthetic data, no GMD needed
+results/                 tracked summaries and plots for sharing
 data/                    NOT in git
   groove/                GMD as downloaded (contains info.csv)
   generated/             optional transformed full-performance MIDI exports

@@ -83,5 +83,7 @@ too short for a complete two-bar clip under the existing clipping rule. The
 conditions table contains 75,628 rows, and 3,462 transformed MIDI files were
 exported. The loader recovered 796 omitted drum hits across 204 usable files.
 The 36 synthetic tests and full-data checks pass. The audit and feature plots are
-saved in `data/features/DATASET_CHECKS.md` after checking every table row and MIDI
-export. No classifier results are included.
+saved in [results/DATASET_CHECKS.md](results/DATASET_CHECKS.md), with the plot in
+`results/dataset_checks.png`, after checking every table row and MIDI export.
+These small summaries are tracked in Git; full feature tables and generated
+MIDI remain ignored under `data/`. No classifier results are included.
