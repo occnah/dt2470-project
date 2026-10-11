@@ -24,6 +24,7 @@ def clip_features(
     onsets: np.ndarray,
     velocities: np.ndarray,
     grid: np.ndarray,
+    grid_32: np.ndarray | None = None,
 ) -> dict[str, float]:
     """
     Rhythmic features for one clip.
@@ -35,7 +36,7 @@ def clip_features(
     deviations = grid_deviations(onsets, grid)
     iois = np.diff(np.unique(onsets))
 
-    return {
+    features = {
         "note_count": len(onsets),
         "timing_abs_mean": float(np.mean(np.abs(deviations))),
         "timing_std": float(np.std(deviations)),
@@ -45,3 +46,8 @@ def clip_features(
         "velocity_std": float(np.std(velocities)),
         "velocity_range": float(np.ptp(velocities)),
     }
+    if grid_32 is not None:
+        deviations_32 = grid_deviations(onsets, grid_32)
+        features["timing_32_abs_mean"] = float(np.mean(np.abs(deviations_32)))
+        features["timing_32_std"] = float(np.std(deviations_32))
+    return features

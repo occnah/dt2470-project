@@ -1,23 +1,19 @@
-"""
-Build the human-baseline feature table: one row per 2-bar clip of an
-original (unmodified) GMD performance.
-
-Usage:
-    python -m src.build_dataset --input data/raw \
-        --output data/features/human_features.csv
-"""
+"""Build matched human and transformed feature tables from two-bar GMD clips."""
 
 import argparse
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-import pretty_midi
 
-from src.common.config import FEATURES_DIR, HUMAN, RAW_DIR
-from src.common.midi import get_drum_notes, sixteenth_grid
+from src.common.config import (
+    FEATURES_DIR, HUMAN, NORMALIZED_VELOCITY, QUANTIZATION_CONDITIONS, RAW_DIR,
+)
+from src.common.midi import get_drum_notes, load_midi, note_grid
 from src.data.clips import cut_clips
 from src.data.gmd import load_info
+from src.data.quantize import normalize_velocity_midi, quantize_midi, quantize_onsets
 from src.features.magnitude import clip_features
 
 
@@ -29,15 +25,17 @@ def process_file(
     path: Path,
     source_file: str,
     meta: dict,
+    include_conditions: bool = False,
+    midi_output: Path | None = None,
 ) -> tuple[list[dict], int]:
     """
-    Split one MIDI file into 2-bar clips and extract features.
+    Cut the original once, then measure the same notes in every condition.
 
     Returns (rows, number of clips skipped because they had no drum notes).
     Raises SkipFile if the file is unreadable or unusable.
     """
     try:
-        midi = pretty_midi.PrettyMIDI(str(path))
+        midi = load_midi(path)
     except Exception as error:
         raise SkipFile("invalid MIDI") from error
 
@@ -49,7 +47,8 @@ def process_file(
     if len(onsets) == 0:
         raise SkipFile("no drum notes")
 
-    grid = sixteenth_grid(midi, midi.get_end_time())
+    grid = note_grid(midi, midi.get_end_time(), 16)
+    grid_32 = note_grid(midi, midi.get_end_time(), 32)
     clips = cut_clips(midi, onsets, grid)
 
     if not clips:
@@ -57,40 +56,84 @@ def process_file(
 
     rows = []
     empty_clips = 0
+    variants = [(HUMAN, None, 0.0, None, onsets, velocities)]
+    if include_conditions:
+        for condition, subdivision, strength in QUANTIZATION_CONDITIONS:
+            target_grid = grid if subdivision == 16 else grid_32
+            variants.append((
+                condition, subdivision, strength, None,
+                quantize_onsets(onsets, target_grid, strength), velocities,
+            ))
+        variants.append((
+            "velocity_normalized", None, 0.0, NORMALIZED_VELOCITY,
+            onsets, np.full_like(velocities, NORMALIZED_VELOCITY),
+        ))
 
     for clip in clips:
         if not clip.notes.any():
             empty_clips += 1
             continue
 
-        rows.append(
-            {
-                "clip_id": f"{Path(source_file).with_suffix('')}_clip{clip.index:03d}",
+        source_clip_id = f"{Path(source_file).with_suffix('')}_clip{clip.index:03d}"
+        for condition, subdivision, strength, velocity, starts, values in variants:
+            rows.append({
+                "clip_id": (
+                    source_clip_id if condition == HUMAN
+                    else f"{source_clip_id}__{condition}"
+                ),
+                "source_clip_id": source_clip_id,
                 "source_file": source_file,
                 "drummer": meta.get("drummer"),
                 "style": meta.get("style"),
+                "split": meta.get("split"),
                 "tempo": clip.tempo,
                 "clip_start": clip.start,
                 "clip_end": clip.end,
-                "condition": HUMAN,
-                **clip_features(onsets[clip.notes], velocities[clip.notes], grid),
-            }
-        )
+                "condition": condition,
+                "subdivision": subdivision,
+                "strength": strength,
+                "normalized_velocity": velocity,
+                **clip_features(starts[clip.notes], values[clip.notes], grid, grid_32),
+            })
+
+    if include_conditions and midi_output is not None and rows:
+        for condition, subdivision, strength in QUANTIZATION_CONDITIONS:
+            destination = midi_output / condition / source_file
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            quantize_midi(midi, subdivision, strength).write(str(destination))
+        destination = midi_output / "velocity_normalized" / source_file
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        normalize_velocity_midi(midi).write(str(destination))
 
     return rows, empty_clips
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a feature table of 2-bar human drum clips."
+        description="Build two-bar human features, optionally with matched transformations."
     )
     parser.add_argument("--input", type=Path, default=RAW_DIR)
     parser.add_argument(
         "--output",
         type=Path,
-        default=FEATURES_DIR / "human_features.csv",
+        help="Default: data/features/human_features.csv (conditions_features.csv with --conditions)",
+    )
+    parser.add_argument(
+        "--conditions", action="store_true",
+        help="Include five timing-quantized conditions and independent velocity normalization.",
+    )
+    parser.add_argument(
+        "--midi-output", type=Path,
+        help="Optionally save transformed full performances here; requires --conditions.",
     )
     args = parser.parse_args()
+    if not args.input.is_dir():
+        parser.error(f"Input directory does not exist: {args.input}")
+    if args.midi_output is not None and not args.conditions:
+        parser.error("--midi-output requires --conditions")
+    if args.output is None:
+        filename = "conditions_features.csv" if args.conditions else "human_features.csv"
+        args.output = FEATURES_DIR / filename
 
     files = sorted(
         path
@@ -98,6 +141,8 @@ def main() -> None:
         if path.suffix.lower() in (".mid", ".midi")
     )
     print(f"Found {len(files)} MIDI files in {args.input}")
+    if not files:
+        parser.error(f"No MIDI files found in {args.input}")
 
     metadata = {}
     if (args.input / "info.csv").exists():
@@ -108,31 +153,44 @@ def main() -> None:
 
     rows = []
     skipped_files = Counter()
+    skipped_records = []
     empty_clips = 0
 
-    for path in files:
+    for index, path in enumerate(files, 1):
         source_file = path.relative_to(args.input).as_posix()
 
         try:
             file_rows, file_empty_clips = process_file(
-                path, source_file, metadata.get(source_file, {})
+                path, source_file, metadata.get(source_file, {}),
+                include_conditions=args.conditions, midi_output=args.midi_output,
             )
         except SkipFile as reason:
             skipped_files[str(reason)] += 1
+            skipped_records.append({"source_file": source_file, "reason": str(reason)})
             continue
 
         rows.extend(file_rows)
         empty_clips += file_empty_clips
+        if index % 100 == 0:
+            print(f"Processed {index}/{len(files)} files", flush=True)
 
+    if not rows:
+        parser.error("No usable clips found; no feature table was written")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(args.output, index=False)
+    skipped_output = args.output.with_name(f"{args.output.stem}_skipped.csv")
+    pd.DataFrame(skipped_records, columns=["source_file", "reason"]).to_csv(
+        skipped_output, index=False
+    )
 
     print(f"Files used:    {len(files) - sum(skipped_files.values())}")
     for reason, count in sorted(skipped_files.items()):
         print(f"Files skipped ({reason}): {count}")
     print(f"Clips skipped (no drum notes): {empty_clips}")
-    print(f"Clips written: {len(rows)}")
+    print(f"Original clips: {sum(row['condition'] == HUMAN for row in rows)}")
+    print(f"Feature rows:   {len(rows)}")
     print(f"Saved: {args.output}")
+    print(f"Skip log: {skipped_output}")
 
 
 if __name__ == "__main__":

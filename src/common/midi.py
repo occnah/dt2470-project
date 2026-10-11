@@ -1,7 +1,48 @@
-"""MIDI helpers: drum-note extraction, tempo and the tempo-aware 1/16 grid."""
+"""MIDI helpers: drum notes, tempo-aware note grids, and bar lines."""
 
+from collections import Counter
+from pathlib import Path
+
+import mido
 import numpy as np
 import pretty_midi
+
+
+def load_midi(path: str | Path) -> pretty_midi.PrettyMIDI:
+    """Read MIDI without losing drum note-ons omitted by note-duration parsing.
+
+    Some GMD drum hits have a note-off at the same tick as their note-on.
+    Keep any omitted drum onset with its original pitch/velocity and zero
+    duration. Onset-based features do not require a positive note duration.
+    """
+    midi = pretty_midi.PrettyMIDI(str(path))
+    existing = Counter(
+        (instrument.program, note.pitch, int(midi.time_to_tick(note.start)), note.velocity)
+        for instrument in midi.instruments if instrument.is_drum
+        for note in instrument.notes
+    )
+    drums = {}
+    for instrument in midi.instruments:
+        if instrument.is_drum:
+            drums.setdefault(instrument.program, instrument)
+    for track in mido.MidiFile(str(path)).tracks:
+        tick, program = 0, 0
+        for event in track:
+            tick += event.time
+            if event.type == "program_change" and event.channel == 9:
+                program = event.program
+            if event.type != "note_on" or event.channel != 9 or event.velocity == 0:
+                continue
+            key = (program, event.note, tick, event.velocity)
+            if existing[key]:
+                existing[key] -= 1
+                continue
+            if program not in drums:
+                drums[program] = pretty_midi.Instrument(program, is_drum=True)
+                midi.instruments.append(drums[program])
+            start = midi.tick_to_time(tick)
+            drums[program].notes.append(pretty_midi.Note(event.velocity, event.note, start, start))
+    return midi
 
 
 def get_drum_notes(
@@ -43,19 +84,24 @@ def get_bpm(midi: pretty_midi.PrettyMIDI) -> float:
     return float(tempi[0])
 
 
-def sixteenth_grid(
+def note_grid(
     midi: pretty_midi.PrettyMIDI,
     end_time: float,
+    subdivision: int = 16,
 ) -> np.ndarray:
     """
-    Return the times (seconds) of every 1/16 note from the start of the
-    file to just past `end_time`.
+    Return a 1/16 or 1/32 grid from time zero to just past `end_time`.
 
     Grid points are placed in MIDI ticks and converted to seconds through
     the file's tempo map, so the grid follows the MIDI tempo rather than
     a fixed BPM.
     """
-    step = midi.resolution // 4
+    if subdivision not in (16, 32):
+        raise ValueError(f"Unsupported subdivision: {subdivision}")
+    steps_per_quarter = subdivision // 4
+    if midi.resolution % steps_per_quarter:
+        raise ValueError("MIDI resolution cannot represent the requested grid exactly")
+    step = midi.resolution // steps_per_quarter
     last_step = midi.time_to_tick(end_time) // step + 2
 
     return np.asarray(
@@ -64,18 +110,29 @@ def sixteenth_grid(
     )
 
 
+def sixteenth_grid(
+    midi: pretty_midi.PrettyMIDI,
+    end_time: float,
+) -> np.ndarray:
+    """Return the tempo-aware 1/16 grid used for original clip membership."""
+    return note_grid(midi, end_time, subdivision=16)
+
+
 def nearest_grid_index(
     onsets: np.ndarray,
     grid: np.ndarray,
 ) -> np.ndarray:
     """
-    Index of the nearest grid point for each onset. Exact ties go to the
-    earlier grid point.
+    Index of the nearest grid point for each onset. Ties go to the earlier
+    point, allowing 1e-12 seconds for tick-to-seconds rounding.
     """
     right = np.clip(np.searchsorted(grid, onsets), 1, len(grid) - 1)
     left = right - 1
 
-    return np.where(onsets - grid[left] <= grid[right] - onsets, left, right)
+    left_distance = onsets - grid[left]
+    right_distance = grid[right] - onsets
+    ties = np.isclose(left_distance, right_distance, rtol=0.0, atol=1e-12)
+    return np.where((left_distance <= right_distance) | ties, left, right)
 
 
 def downbeat_ticks(
