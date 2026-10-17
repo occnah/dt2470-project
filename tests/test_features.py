@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from src.common.midi import nearest_grid_index
-from src.features.magnitude import clip_features, grid_deviations
+from src.features.magnitude import clip_features, grid_deviations, group_onset_events
 
 GRID = np.array([0.0, 0.125, 0.25, 0.375, 0.5])
 
@@ -58,3 +58,39 @@ def test_clip_features_single_onset_has_nan_ioi():
     features = clip_features(np.array([0.25, 0.25]), np.array([80.0, 90.0]), GRID)
     assert math.isnan(features["ioi_mean"])
     assert math.isnan(features["ioi_std"])
+
+
+def test_group_onset_events_merges_within_tolerance():
+    # 1.000 and 1.012 are a near-simultaneous kick+hi-hat (within 20ms);
+    # 1.247 and 1.254 are another such pair. Quantization could otherwise
+    # pull either pair exactly together and silently drop an IOI event.
+    onsets = np.array([1.000, 1.012, 1.247, 1.254])
+    events = group_onset_events(onsets, tolerance=0.02)
+    np.testing.assert_allclose(events, [1.006, 1.2505])
+
+
+def test_group_onset_events_keeps_events_past_tolerance_apart():
+    onsets = np.array([1.000, 1.025])  # 25ms apart: two distinct events
+    events = group_onset_events(onsets, tolerance=0.02)
+    np.testing.assert_allclose(events, [1.000, 1.025])
+
+
+def test_group_onset_events_is_order_independent():
+    onsets = np.array([1.254, 1.000, 1.012, 1.247])
+    np.testing.assert_allclose(
+        group_onset_events(onsets, tolerance=0.02),
+        group_onset_events(np.sort(onsets), tolerance=0.02),
+    )
+
+
+def test_clip_features_ioi_uses_grouped_events_not_raw_uniques():
+    # Two near-simultaneous onset pairs 20ms apart within each pair, but
+    # the pairs themselves are not exact duplicates, so np.unique would
+    # treat this as four events and one IOI would be ~0. Grouping treats
+    # each pair as a single event.
+    onsets = np.array([1.000, 1.012, 1.247, 1.254])
+    velocities = np.full(4, 80.0)
+    grid = np.array([0.0, 1.0, 1.25, 1.5])
+    features = clip_features(onsets, velocities, grid)
+    assert features["ioi_mean"] == pytest.approx(1.2505 - 1.006)
+    assert features["ioi_std"] == pytest.approx(0.0)
