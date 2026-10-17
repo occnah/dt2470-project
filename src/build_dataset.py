@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 
 from src.common.config import (
-    FEATURES_DIR, HUMAN, NORMALIZED_VELOCITY, QUANTIZATION_CONDITIONS, RAW_DIR,
+    EXCLUDED_STYLE_KEYWORDS, FEATURES_DIR, HUMAN, NORMALIZED_VELOCITY,
+    QUANTIZATION_CONDITIONS, RAW_DIR, VALID_BEAT_TYPE, VALID_TIME_SIGNATURE,
 )
 from src.common.midi import get_drum_notes, load_midi, note_grid
 from src.data.clips import cut_clips
@@ -19,6 +20,28 @@ from src.features.magnitude import clip_features
 
 class SkipFile(Exception):
     """Raised when a whole MIDI file cannot be used."""
+
+
+def out_of_scope_reason(meta: dict) -> str | None:
+    """
+    Return why this performance is out of scope for the main experiment,
+    or None if it's in scope.
+
+    Scope is ordinary 4/4 beats/grooves: fills are excluded (`beat_type`),
+    as are performances outside 4/4 (`time_signature`) and any whose
+    style is explicitly marked as a swing or triplet feel. This is a
+    dataset-level filter applied once per file in `main`, independent of
+    per-clip processing in `process_file`, and only when GMD metadata was
+    loaded (an empty `meta` from a missing info.csv is not filtered).
+    """
+    if meta.get("beat_type") != VALID_BEAT_TYPE:
+        return "not a beat (fill)"
+    if meta.get("time_signature") != VALID_TIME_SIGNATURE:
+        return "not 4/4"
+    style = str(meta.get("style", "")).lower()
+    if any(keyword in style for keyword in EXCLUDED_STYLE_KEYWORDS):
+        return "swing/triplet style"
+    return None
 
 
 def process_file(
@@ -85,6 +108,8 @@ def process_file(
                 "source_file": source_file,
                 "drummer": meta.get("drummer"),
                 "style": meta.get("style"),
+                "beat_type": meta.get("beat_type"),
+                "time_signature": meta.get("time_signature"),
                 "split": meta.get("split"),
                 "tempo": clip.tempo,
                 "clip_start": clip.start,
@@ -158,10 +183,18 @@ def main() -> None:
 
     for index, path in enumerate(files, 1):
         source_file = path.relative_to(args.input).as_posix()
+        meta = metadata.get(source_file, {})
+
+        if metadata:
+            reason = out_of_scope_reason(meta)
+            if reason is not None:
+                skipped_files[reason] += 1
+                skipped_records.append({"source_file": source_file, "reason": reason})
+                continue
 
         try:
             file_rows, file_empty_clips = process_file(
-                path, source_file, metadata.get(source_file, {}),
+                path, source_file, meta,
                 include_conditions=args.conditions, midi_output=args.midi_output,
             )
         except SkipFile as reason:

@@ -7,7 +7,7 @@ import numpy as np
 import pretty_midi
 import pytest
 
-from src.build_dataset import SkipFile, process_file
+from src.build_dataset import SkipFile, out_of_scope_reason, process_file
 from src.common.midi import get_drum_notes, sixteenth_grid
 from src.data.clips import cut_clips
 from src.features.magnitude import grid_deviations
@@ -147,3 +147,21 @@ def test_invalid_midi_is_skipped(tmp_path):
     path.write_text("not a midi file")
     with pytest.raises(SkipFile, match="invalid MIDI"):
         process_file(path, "broken.mid", {})
+
+
+@pytest.mark.parametrize(
+    "meta, reason",
+    [
+        ({"beat_type": "fill", "time_signature": "4-4", "style": "rock"}, "not a beat (fill)"),
+        ({"beat_type": "beat", "time_signature": "3-4", "style": "rock"}, "not 4/4"),
+        ({"beat_type": "beat", "time_signature": "4-4", "style": "jazz-swing"}, "swing/triplet style"),
+        ({"beat_type": "beat", "time_signature": "4-4", "style": "funk-triplet"}, "swing/triplet style"),
+    ],
+)
+def test_out_of_scope_reason_excludes(meta, reason):
+    assert out_of_scope_reason(meta) == reason
+
+
+def test_out_of_scope_reason_keeps_ordinary_beats():
+    meta = {"beat_type": "beat", "time_signature": "4-4", "style": "rock"}
+    assert out_of_scope_reason(meta) is None
