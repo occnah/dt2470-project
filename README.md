@@ -3,16 +3,20 @@
 Can a classifier tell real drum performances from quantized and artificially
 humanized versions? Data: Groove MIDI Dataset (GMD).
 
-Current stage: **matched conditions** — two-bar clips of the original performances,
-five timing-quantized versions, and independent velocity normalization.
+Current stage: **first classifier results** — logistic regression and a timing
+rule evaluated on matched conditions with each drummer held out in turn.
 See [CODE_EXPLAINER.md](CODE_EXPLAINER.md) for the pipeline and table columns.
 The checked dataset summary and plots are in [results/DATASET_CHECKS.md](results/DATASET_CHECKS.md).
+Classifier metrics and plots are in [results/baseline/MODEL_RESULTS.md](results/baseline/MODEL_RESULTS.md).
 
 ## Layout
 
 ```
 src/
   build_dataset.py       entry point: GMD -> human / matched condition features
+  train_baseline.py      entry point: features -> held-out-drummer evaluation
+  models/
+    baseline.py          logistic regression, timing rule, grouped evaluation
   common/
     config.py            clip length, seed, data paths
     midi.py              drum notes, tempo-aware 1/16 and 1/32 grids, bar lines
@@ -24,6 +28,7 @@ src/
     magnitude.py         timing / IOI / velocity features
 tests/                   synthetic data, no GMD needed
 results/                 tracked summaries and plots for sharing
+  baseline/              metrics, fold results, configuration, plots, report
 data/                    NOT in git
   groove/                GMD as downloaded (contains info.csv)
   generated/             optional transformed full-performance MIDI exports
@@ -58,6 +63,15 @@ Optionally also export transformed full performances for playback:
 ```bash
 env/bin/python -m src.build_dataset --conditions --midi-output data/generated
 ```
+
+Run the six balanced human-versus-edited experiments:
+
+```bash
+env/bin/python -m src.train_baseline
+```
+
+Small summaries go into `results/baseline/`. Full held-out predictions go into
+ignored `data/features/baseline_predictions.csv`.
 
 ```bash
 env/bin/python -m pytest
