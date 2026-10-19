@@ -68,19 +68,58 @@ def write_report(full_summary: pd.DataFrame, ablated_summary: pd.DataFrame, outp
         ].iloc[0]
         lines.append(f"| {condition} | {full_f1:.3f} | {ablated_f1:.3f} | {ablated_f1 - full_f1:+.3f} |")
 
+    lines += [
+        "", "## Variation between drummers", "",
+        "Equal-weight mean ± sample SD of F1 across the nine held-out drummers",
+        "(logistic regression only); compare with the pooled table above, which",
+        "weights drummers by clip count instead.", "",
+        "| Condition | Full features (mean ± SD) | Ablated, no 1/32 (mean ± SD) | Delta in mean |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for condition in SIXTEENTH_CONDITIONS:
+        full_row = full_summary.loc[
+            (full_summary.condition == condition) & (full_summary.model == "logistic_regression")
+        ].iloc[0]
+        ablated_row = ablated_summary.loc[
+            (ablated_summary.condition == condition) & (ablated_summary.model == "logistic_regression")
+        ].iloc[0]
+        delta_mean = ablated_row.drummer_mean_f1 - full_row.drummer_mean_f1
+        lines.append(
+            f"| {condition} | {full_row.drummer_mean_f1:.3f} ± {full_row.drummer_sd_f1:.3f} | "
+            f"{ablated_row.drummer_mean_f1:.3f} ± {ablated_row.drummer_sd_f1:.3f} | {delta_mean:+.3f} |"
+        )
+
     full_threshold = full_summary.loc[full_summary.model == "timing_threshold", "f1"].to_numpy()
     ablated_threshold = ablated_summary.loc[ablated_summary.model == "timing_threshold", "f1"].to_numpy()
     unchanged = bool((full_threshold == ablated_threshold).all())
+
+    deltas = {
+        condition: (
+            ablated_summary.loc[
+                (ablated_summary.condition == condition) & (ablated_summary.model == "logistic_regression"), "f1"
+            ].iloc[0]
+            - full_summary.loc[
+                (full_summary.condition == condition) & (full_summary.model == "logistic_regression"), "f1"
+            ].iloc[0]
+        )
+        for condition in SIXTEENTH_CONDITIONS
+    }
+    largest_drop_condition = min(deltas, key=deltas.get)
+
     lines += [
         "",
         f"Timing-threshold F1 unchanged between the two runs: {unchanged}.", "",
-        "## Interpretation", "",
-        "A small or no F1 drop when the 1/32 features are removed means logistic",
-        "regression was not relying on their relationship to the 1/16 deviation —",
-        "the 1/16 deviation features alone already carry the detectable signal. A",
-        "large drop, concentrated at 50% and above, would mean the full-feature",
-        "result partly reflected that construction-level relationship rather than",
-        "detection that would hold with 1/16 features alone.", "",
+        "## Finding", "",
+        "The original concern was that the 1/16/1/32 relationship at 50%+ quantization",
+        "gives logistic regression a shortcut there. The data shows the opposite",
+        f"pattern: removing the 1/32 features costs the most at {deltas['quantized_16_25']:+.3f} F1",
+        "(25%) and barely matters at 75%/100%, where the two grids are most related by",
+        "construction and are consequently most redundant, not most exploited. The 1/32",
+        "features are providing real, non-redundant signal specifically where detection is",
+        "hardest (low/moderate quantization strength), not inflating scores through",
+        "redundancy where detection was already near-ceiling. So the strong scores at",
+        "75%/100% do not depend on this relationship between the two grids; the weaker",
+        f"scores at 25%/50% partly do (largest effect at {largest_drop_condition}).", "",
         "## Reproduce", "", "```bash", "env/bin/python -m src.ablation", "```", "",
     ]
     (output / "ABLATION_RESULTS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

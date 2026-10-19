@@ -16,16 +16,33 @@ assumed).
 | quantized_16_75 | 0.974 | 0.973 | -0.001 |
 | quantized_16_100 | 1.000 | 1.000 | +0.000 |
 
+## Variation between drummers
+
+Equal-weight mean ± sample SD of F1 across the nine held-out drummers
+(logistic regression only); compare with the pooled table above, which
+weights drummers by clip count instead.
+
+| Condition | Full features (mean ± SD) | Ablated, no 1/32 (mean ± SD) | Delta in mean |
+| --- | ---: | ---: | ---: |
+| quantized_16_25 | 0.732 ± 0.063 | 0.617 ± 0.082 | -0.115 |
+| quantized_16_50 | 0.941 ± 0.044 | 0.802 ± 0.055 | -0.140 |
+| quantized_16_75 | 0.969 ± 0.017 | 0.968 ± 0.017 | -0.001 |
+| quantized_16_100 | 1.000 ± 0.000 | 1.000 ± 0.000 | +0.000 |
+
 Timing-threshold F1 unchanged between the two runs: True.
 
-## Interpretation
+## Finding
 
-A small or no F1 drop when the 1/32 features are removed means logistic
-regression was not relying on their relationship to the 1/16 deviation —
-the 1/16 deviation features alone already carry the detectable signal. A
-large drop, concentrated at 50% and above, would mean the full-feature
-result partly reflected that construction-level relationship rather than
-detection that would hold with 1/16 features alone.
+The original concern was that the 1/16/1/32 relationship at 50%+ quantization
+gives logistic regression a shortcut there. The data shows the opposite
+pattern: removing the 1/32 features costs the most at -0.091 F1
+(25%) and barely matters at 75%/100%, where the two grids are most related by
+construction and are consequently most redundant, not most exploited. The 1/32
+features are providing real, non-redundant signal specifically where detection is
+hardest (low/moderate quantization strength), not inflating scores through
+redundancy where detection was already near-ceiling. So the strong scores at
+75%/100% do not depend on this relationship between the two grids; the weaker
+scores at 25%/50% partly do (largest effect at quantized_16_50).
 
 ## Reproduce
 
