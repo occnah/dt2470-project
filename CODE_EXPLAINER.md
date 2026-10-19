@@ -23,6 +23,14 @@ Use `--input` and `--output` to override the locations.
   these grids. Exact halfway ties use the earlier grid point. The loader also
   restores raw drum note-ons omitted by the MIDI duration parser, with their
   original onset/velocity and zero duration, so every recorded drum hit is counted.
+- `build_dataset.py` main loop: before processing, each file is kept only if it
+  is an ordinary 4/4 beat/groove — `beat_type == "beat"` (fills excluded),
+  `time_signature == "4-4"`, and `style` not marked `swing` or `triplet`. This
+  filter only runs when GMD's `info.csv` was loaded; it has no effect on
+  `process_file` itself, which the synthetic tests call directly. The goal is
+  to measure "human vs quantized" rather than "swing vs straight" — a swung
+  groove forced onto a straight grid would be detectable for reasons
+  unrelated to quantization.
 - `data/quantize.py`: moves each onset toward its nearest grid point:
   `new = original + strength * (target - original)`. It also provides a separate
   transformation setting every drum velocity to 80. MIDI helpers return copies,
@@ -33,6 +41,13 @@ Use `--input` and `--output` to override the locations.
 - `features/magnitude.py`: extracts timing, inter-onset interval (IOI), and velocity
   summaries from those matched notes. Existing feature names are preserved;
   `timing_32_abs_mean` and `timing_32_std` add the finer-grid measurements.
+  IOIs are computed between onset *events* (`group_onset_events`), not raw
+  distinct onset times: onsets within `IOI_EVENT_TOLERANCE` (20ms) of each
+  other — e.g. a kick and hi-hat struck together — merge into one event.
+  Applied identically to every condition, so quantization pulling two such
+  onsets exactly together can't change the IOI event count on its own and
+  leak detectability through a counting artifact rather than real timing
+  deviation.
 - `tests/test_quantize.py`: checks partial strengths, tempo changes, boundary
   membership, independent velocity normalization, and optional MIDI exports.
 - `models/baseline.py`: validates matched clips, trains logistic regression and
@@ -55,9 +70,12 @@ Each usable source clip has seven rows in the conditions table:
 | `quantized_32_100` | Fully on 1/32 grid | Original |
 | `velocity_normalized` | Original | Constant 80 |
 
-`clip_id` uniquely identifies a row. `source_clip_id` links its seven versions.
-`source_file`, `drummer`, and `style` retain the original metadata. `split` is the
-existing GMD split, not a new drummer-disjoint split. `subdivision`, `strength`,
+`clip_id` uniquely identifies a row. `source_clip_id` links its seven versions
+and serves as the stable source identifier for paired/provenance analysis.
+`source_file`, `drummer`, `style`, `beat_type`, and `time_signature` retain
+the original GMD metadata (the latter two are also the fields the main-scope
+filter above is applied to). `split` is the existing GMD split, not a new
+drummer-disjoint split. `subdivision`, `strength`,
 and `normalized_velocity` describe the transformation; inapplicable values are
 blank. Human and velocity-only rows have strength 0.
 
