@@ -1,10 +1,10 @@
 {
-  "run_at": "2026-10-18T22:00:43+02:00",
-  "input": "/Users/karllindberg/Documents/CTMAT/DT2470 Music Informatics/project/data/features/conditions_features.csv",
-  "input_sha256": "e91c459890fbb35de293f26815f2aab7643c1c9202ba9e69405a668c0dfaac02",
+  "run_at": "2026-10-19T13:46:42+02:00",
+  "input": "data/features/conditions_features.csv",
+  "input_sha256": "639e51523e5019366ae4f8108e48a682041f2c3051cb43a253d2303229441aeb",
   "predictions_output": "data/features/baseline_predictions.csv",
-  "source_rows": 75628,
-  "n_drummers": 10,
+  "source_rows": 69258,
+  "n_drummers": 9,
   "features": [
     "note_count",
     "timing_abs_mean",
@@ -43,7 +43,7 @@
   "hyperparameter_search": false,
   "formal_reliability_criterion": null,
   "versions": {
-    "python": "3.12.14",
+    "python": "3.12.7",
     "numpy": "2.5.4",
     "pandas": "3.0.6",
     "scikit-learn": "1.9.1",

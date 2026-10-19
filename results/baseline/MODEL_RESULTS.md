@@ -1,12 +1,12 @@
 # Baseline classifier results
 
-Run: 2026-10-18T22:00:43+02:00.
+Run: 2026-10-19T13:46:42+02:00.
 
 ## Method
 
 Six separate balanced binary experiments compare original clips with one edited condition at a time. Edited clips are the positive class (1); human clips are class 0.
 
-Each experiment has 21,608 clips. Leave-one-drummer-out evaluation trains on 9 drummers and tests on the remaining drummer, repeating for all 10 drummers. Every row is tested exactly once per experiment and method. All versions of a clip, and all clips from a performance, stay with their drummer.
+Each experiment has 19,788 clips. Leave-one-drummer-out evaluation trains on 8 drummers and tests on the remaining drummer, repeating for all 9 drummers. Every row is tested exactly once per experiment and method. All versions of a clip, and all clips from a performance, stay with their drummer.
 
 - Logistic regression uses the 10 existing numerical features, StandardScaler fitted only on the training fold, and fixed settings: C=1, lbfgs, max_iter=2000, seed=42. The probability decision threshold is 0.5. No hyperparameter search or test-driven feature selection was performed.
 - The timing rule predicts an edit when mean absolute grid deviation is at or below a cutoff chosen only from training rows. The cutoff maximizes balanced accuracy; tied objectives choose the lowest cutoff. It uses the 1/16 deviation for the four 1/16 experiments and the velocity-only control, and the 1/32 deviation for the 1/32 experiment.
@@ -19,18 +19,18 @@ Each drummer contributes equally below. Values are mean ± sample standard devia
 
 | Condition | Method | Accuracy | Precision | Recall | F1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 1/16 at 25% | Logistic regression | 0.729 ± 0.065 | 0.715 ± 0.091 | 0.794 ± 0.102 | 0.745 ± 0.058 |
-| 1/16 at 25% | Timing threshold | 0.635 ± 0.019 | 0.629 ± 0.037 | 0.684 ± 0.125 | 0.647 ± 0.044 |
-| 1/16 at 50% | Logistic regression | 0.943 ± 0.051 | 0.910 ± 0.080 | 0.991 ± 0.013 | 0.947 ± 0.045 |
-| 1/16 at 50% | Timing threshold | 0.801 ± 0.047 | 0.809 ± 0.064 | 0.802 ± 0.105 | 0.799 ± 0.053 |
-| 1/16 at 75% | Logistic regression | 0.971 ± 0.019 | 0.973 ± 0.030 | 0.971 ± 0.025 | 0.971 ± 0.019 |
-| 1/16 at 75% | Timing threshold | 0.954 ± 0.021 | 0.959 ± 0.039 | 0.952 ± 0.047 | 0.954 ± 0.022 |
-| 1/16 at 100% | Logistic regression | 1.000 ± 0.001 | 0.999 ± 0.001 | 1.000 ± 0.000 | 1.000 ± 0.001 |
+| 1/16 at 25% | Logistic regression | 0.715 ± 0.057 | 0.696 ± 0.068 | 0.789 ± 0.119 | 0.732 ± 0.063 |
+| 1/16 at 25% | Timing threshold | 0.634 ± 0.020 | 0.631 ± 0.036 | 0.669 ± 0.109 | 0.643 ± 0.038 |
+| 1/16 at 50% | Logistic regression | 0.936 ± 0.050 | 0.901 ± 0.077 | 0.989 ± 0.018 | 0.941 ± 0.044 |
+| 1/16 at 50% | Timing threshold | 0.793 ± 0.039 | 0.805 ± 0.067 | 0.789 ± 0.086 | 0.792 ± 0.040 |
+| 1/16 at 75% | Logistic regression | 0.969 ± 0.017 | 0.973 ± 0.028 | 0.966 ± 0.025 | 0.969 ± 0.017 |
+| 1/16 at 75% | Timing threshold | 0.949 ± 0.017 | 0.954 ± 0.041 | 0.948 ± 0.045 | 0.949 ± 0.017 |
+| 1/16 at 100% | Logistic regression | 1.000 ± 0.000 | 1.000 ± 0.001 | 1.000 ± 0.000 | 1.000 ± 0.000 |
 | 1/16 at 100% | Timing threshold | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 |
-| 1/32 at 100% | Logistic regression | 1.000 ± 0.001 | 1.000 ± 0.001 | 1.000 ± 0.000 | 1.000 ± 0.001 |
+| 1/32 at 100% | Logistic regression | 1.000 ± 0.000 | 1.000 ± 0.001 | 1.000 ± 0.000 | 1.000 ± 0.000 |
 | 1/32 at 100% | Timing threshold | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 |
-| Velocity only | Logistic regression | 0.998 ± 0.003 | 0.997 ± 0.006 | 1.000 ± 0.001 | 0.998 ± 0.003 |
-| Velocity only | Timing threshold | 0.500 ± 0.000 | 0.050 ± 0.158 | 0.000 ± 0.001 | 0.001 ± 0.002 |
+| Velocity only | Logistic regression | 0.998 ± 0.004 | 0.997 ± 0.007 | 1.000 ± 0.000 | 0.998 ± 0.004 |
+| Velocity only | Timing threshold | 0.500 ± 0.000 | 0.056 ± 0.167 | 0.000 ± 0.001 | 0.001 ± 0.002 |
 
 ## Pooled scores
 
@@ -38,18 +38,18 @@ These metrics pool all held-out predictions. Drummers with more clips have more 
 
 | Condition | Method | Accuracy | Precision | Recall | F1 | TN | FP | FN | TP |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/16 at 25% | Logistic regression | 0.736 | 0.691 | 0.853 | 0.764 | 6,688 | 4,116 | 1,585 | 9,219 |
-| 1/16 at 25% | Timing threshold | 0.638 | 0.615 | 0.737 | 0.671 | 5,820 | 4,984 | 2,838 | 7,966 |
-| 1/16 at 50% | Logistic regression | 0.933 | 0.887 | 0.994 | 0.937 | 9,432 | 1,372 | 70 | 10,734 |
-| 1/16 at 50% | Timing threshold | 0.810 | 0.792 | 0.840 | 0.815 | 8,417 | 2,387 | 1,726 | 9,078 |
-| 1/16 at 75% | Logistic regression | 0.973 | 0.965 | 0.982 | 0.974 | 10,425 | 379 | 198 | 10,606 |
-| 1/16 at 75% | Timing threshold | 0.955 | 0.949 | 0.963 | 0.956 | 10,242 | 562 | 405 | 10,399 |
-| 1/16 at 100% | Logistic regression | 1.000 | 1.000 | 1.000 | 1.000 | 10,802 | 2 | 0 | 10,804 |
-| 1/16 at 100% | Timing threshold | 1.000 | 1.000 | 1.000 | 1.000 | 10,804 | 0 | 0 | 10,804 |
-| 1/32 at 100% | Logistic regression | 1.000 | 1.000 | 1.000 | 1.000 | 10,803 | 1 | 0 | 10,804 |
-| 1/32 at 100% | Timing threshold | 1.000 | 1.000 | 1.000 | 1.000 | 10,804 | 0 | 0 | 10,804 |
-| Velocity only | Logistic regression | 0.999 | 0.997 | 1.000 | 0.999 | 10,775 | 29 | 1 | 10,803 |
-| Velocity only | Timing threshold | 0.500 | 0.500 | 0.000 | 0.000 | 10,803 | 1 | 10,803 | 1 |
+| 1/16 at 25% | Logistic regression | 0.730 | 0.685 | 0.852 | 0.759 | 6,025 | 3,869 | 1,469 | 8,425 |
+| 1/16 at 25% | Timing threshold | 0.638 | 0.616 | 0.733 | 0.669 | 5,381 | 4,513 | 2,645 | 7,249 |
+| 1/16 at 50% | Logistic regression | 0.931 | 0.883 | 0.993 | 0.935 | 8,591 | 1,303 | 67 | 9,827 |
+| 1/16 at 50% | Timing threshold | 0.808 | 0.791 | 0.837 | 0.813 | 7,710 | 2,184 | 1,616 | 8,278 |
+| 1/16 at 75% | Logistic regression | 0.974 | 0.967 | 0.982 | 0.974 | 9,558 | 336 | 180 | 9,714 |
+| 1/16 at 75% | Timing threshold | 0.952 | 0.943 | 0.962 | 0.953 | 9,319 | 575 | 372 | 9,522 |
+| 1/16 at 100% | Logistic regression | 1.000 | 1.000 | 1.000 | 1.000 | 9,893 | 1 | 0 | 9,894 |
+| 1/16 at 100% | Timing threshold | 1.000 | 1.000 | 1.000 | 1.000 | 9,894 | 0 | 0 | 9,894 |
+| 1/32 at 100% | Logistic regression | 1.000 | 1.000 | 1.000 | 1.000 | 9,893 | 1 | 0 | 9,894 |
+| 1/32 at 100% | Timing threshold | 1.000 | 1.000 | 1.000 | 1.000 | 9,894 | 0 | 0 | 9,894 |
+| Velocity only | Logistic regression | 0.999 | 0.997 | 1.000 | 0.999 | 9,869 | 25 | 1 | 9,893 |
+| Velocity only | Timing threshold | 0.500 | 0.500 | 0.000 | 0.000 | 9,893 | 1 | 9,893 | 1 |
 
 ## Figures
 
@@ -83,4 +83,4 @@ env/bin/python -m src.train_baseline
 - `run_config.json`: fixed settings, input-table SHA-256, feature list, and package versions.
 - `data/features/baseline_predictions.csv` in the project: full held-out labels/predictions, kept outside Git with other generated data when using the default path.
 
-Input SHA-256: `e91c459890fbb35de293f26815f2aab7643c1c9202ba9e69405a668c0dfaac02`.
+Input SHA-256: `639e51523e5019366ae4f8108e48a682041f2c3051cb43a253d2303229441aeb`.
