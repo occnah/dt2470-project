@@ -55,6 +55,12 @@ Use `--input` and `--output` to override the locations.
 - `train_baseline.py`: runs the six comparisons and saves metrics, plots, run
   settings, and full held-out predictions. `tests/test_baseline.py` checks the
   pairing, thresholds, feature whitelist, and training-only scaling.
+- `ablation.py`: reruns the four 1/16 experiments with `timing_32_abs_mean`/
+  `timing_32_std` excluded from logistic regression's inputs, to check
+  whether their relationship to the 1/16 deviation at 50%+ quantization
+  strength was giving it a shortcut (see `WHATS_LEFT.md`). Reuses
+  `evaluate_table`'s new `conditions`/`feature_columns` parameters rather
+  than duplicating the leave-one-drummer-out protocol.
 
 ## Conditions and identifiers
 
@@ -141,3 +147,22 @@ pooled scores plus equal-weight drummer means and sample SDs; `fold_metrics.csv`
 records each test drummer and training cutoff. `run_config.json` stores the
 fixed settings, feature list, input hash, and package versions. Full predictions
 are in ignored `data/features/baseline_predictions.csv`.
+
+Note: this run predates the 4/4-beat/swing-triplet filter and the IOI event
+grouping fix above. Re-running `train_baseline` on the filtered dataset gave
+nearly identical scores (within ~0.01 F1 at every quantization level), so the
+filter did not change the conclusions here — see the regenerated
+`results/baseline/` files for the current numbers; the counts/scores in this
+section are left as originally written and are now slightly stale.
+
+## Feature ablation
+
+`src/ablation.py` reruns the four 1/16 experiments with the 1/32 timing
+features removed from logistic regression, since at 50%+ 1/16 quantization
+strength the 1/16 and 1/32 deviation features become related by
+construction (moving further toward the 1/16 grid also reduces the 1/32
+deviation). The timing-threshold baseline is unaffected by design on these
+conditions — it already uses `timing_abs_mean` alone — and is checked, not
+assumed, to be identical in both runs. See
+[results/ablation/ABLATION_RESULTS.md](results/ablation/ABLATION_RESULTS.md)
+once it's been run (`env/bin/python -m src.ablation`) for the comparison.

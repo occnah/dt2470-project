@@ -164,3 +164,34 @@ def test_evaluation_holds_out_each_drummer_and_fits_scaling_on_training_only(pai
     assert threshold_rows.loc[threshold_rows.condition == "quantized_32_100", "threshold_feature"].eq("timing_32_abs_mean").all()
     assert threshold_rows.loc[threshold_rows.condition != "quantized_32_100", "threshold_feature"].eq("timing_abs_mean").all()
     assert threshold_rows.loc[threshold_rows.condition == "velocity_normalized", "accuracy"].eq(0.5).all()
+
+
+def test_evaluate_table_can_restrict_conditions_and_feature_columns(paired_table, monkeypatch):
+    sixteenth_conditions = tuple(c for c in baseline.EXPERIMENT_CONDITIONS if c.startswith("quantized_16_"))
+    ablated_columns = tuple(c for c in baseline.FEATURE_COLUMNS if c not in ("timing_32_abs_mean", "timing_32_std"))
+
+    seen_column_counts = []
+    original_fit = StandardScaler.fit
+
+    def record_width(scaler, values, *args, **kwargs):
+        seen_column_counts.append(np.asarray(values).shape[1])
+        return original_fit(scaler, values, *args, **kwargs)
+
+    monkeypatch.setattr(StandardScaler, "fit", record_width)
+    metrics, predictions = baseline.evaluate_table(
+        paired_table, conditions=sixteenth_conditions, feature_columns=ablated_columns,
+    )
+
+    # Only the four 1/16 conditions ran, not all six.
+    assert set(metrics.condition) == set(sixteenth_conditions)
+    assert set(predictions.condition) == set(sixteenth_conditions)
+    # Logistic regression only ever saw the ablated (narrower) feature set.
+    assert set(seen_column_counts) == {len(ablated_columns)}
+    # The timing-threshold model doesn't use FEATURE_COLUMNS at all, so
+    # restricting them changes nothing about its results or behavior.
+    full_metrics, _ = baseline.evaluate_table(paired_table, conditions=sixteenth_conditions)
+    full_threshold = full_metrics.loc[full_metrics.model == "timing_threshold"].sort_values(["condition", "test_drummer"])
+    ablated_threshold = metrics.loc[metrics.model == "timing_threshold"].sort_values(["condition", "test_drummer"])
+    pd.testing.assert_frame_equal(
+        full_threshold.reset_index(drop=True), ablated_threshold.reset_index(drop=True),
+    )

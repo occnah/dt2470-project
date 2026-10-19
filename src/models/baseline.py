@@ -125,11 +125,27 @@ def binary_metrics(targets: np.ndarray, predictions: np.ndarray) -> dict:
     }
 
 
-def evaluate_table(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run six fixed experiments, testing every row once per method/experiment."""
+def evaluate_table(
+    frame: pd.DataFrame,
+    conditions: tuple[str, ...] = EXPERIMENT_CONDITIONS,
+    feature_columns: tuple[str, ...] = FEATURE_COLUMNS,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run the given experiments, testing every row once per method/experiment.
+
+    `conditions` and `feature_columns` default to the full fixed baseline
+    protocol (all six experiments, all ten features). Either can be
+    narrowed for an ablation — e.g. the four 1/16 experiments with the
+    1/32 timing features removed, to check whether their relationship to
+    the 1/16 deviation at 50%+ quantization strength (see WHATS_LEFT.md)
+    is giving logistic regression a shortcut — without duplicating this
+    function's leakage checks or threshold fitting. `feature_columns`
+    only changes what logistic regression is trained/predicted on; the
+    timing-threshold baseline's single `threshold_feature` is unaffected
+    unless it's also been excluded.
+    """
     validate_table(frame)
     folds, predictions = [], []
-    for condition in EXPERIMENT_CONDITIONS:
+    for condition in conditions:
         pair = make_pair(frame, condition)
         threshold_feature = "timing_32_abs_mean" if condition == "quantized_32_100" else "timing_abs_mean"
         splitter = LeaveOneGroupOut()
@@ -140,8 +156,8 @@ def evaluate_table(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
                     raise ValueError(f"Train/test leakage in {name}")
             train_y, test_y = train.target.to_numpy(), test.target.to_numpy()
             classifier = make_classifier()
-            classifier.fit(train[list(FEATURE_COLUMNS)], train_y)
-            logistic_predictions = classifier.predict(test[list(FEATURE_COLUMNS)])
+            classifier.fit(train[list(feature_columns)], train_y)
+            logistic_predictions = classifier.predict(test[list(feature_columns)])
             threshold = fit_timing_threshold(train[threshold_feature].to_numpy(), train_y)
             threshold_predictions = (test[threshold_feature].to_numpy() <= threshold).astype(int)
             for model, predicted, cutoff, feature in (
@@ -165,10 +181,19 @@ def evaluate_table(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(folds), pd.concat(predictions, ignore_index=True)
 
 
-def summarize_metrics(folds: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFrame:
-    """Report pooled predictions and equal-weight drummer means/sample SDs."""
+def summarize_metrics(
+    folds: pd.DataFrame,
+    predictions: pd.DataFrame,
+    conditions: tuple[str, ...] = EXPERIMENT_CONDITIONS,
+) -> pd.DataFrame:
+    """Report pooled predictions and equal-weight drummer means/sample SDs.
+
+    `conditions` must match whatever subset `evaluate_table` was run with
+    (defaults to all six); summarizing a condition with no rows in `folds`/
+    `predictions` would otherwise hit an empty-input error below.
+    """
     summary = []
-    for condition in EXPERIMENT_CONDITIONS:
+    for condition in conditions:
         for model in MODEL_NAMES:
             test = predictions[(predictions.condition == condition) & (predictions.model == model)]
             subset = folds[(folds.condition == condition) & (folds.model == model)]
