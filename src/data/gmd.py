@@ -1,40 +1,35 @@
-"""Groove MIDI Dataset metadata (info.csv) loading and filtering."""
+"""Groove MIDI Dataset metadata (info.csv) and the dataset scope filter."""
 
 from pathlib import Path
 
 import pandas as pd
 
-from src.common.config import RAW_DIR
+from src.common.config import EXCLUDED_STYLE_KEYWORDS, VALID_BEAT_TYPE, VALID_TIME_SIGNATURE
 
 
-def load_info(root: Path = RAW_DIR) -> pd.DataFrame:
+def load_metadata(root: Path) -> dict[str, dict]:
     """
-    Load the Groove MIDI Dataset metadata (info.csv).
-
-    Adds a `midi_path` column with the full path to each MIDI file.
+    Return GMD metadata keyed by MIDI path relative to `root`
+    (e.g. "drummer1/session1/1_funk_80_beat_4-4.mid"), or {} if `root`
+    has no info.csv.
     """
-    info = pd.read_csv(root / "info.csv")
-    info["midi_path"] = info["midi_filename"].map(lambda name: root / name)
-    return info
+    path = root / "info.csv"
+    if not path.exists():
+        return {}
+    return pd.read_csv(path).set_index("midi_filename").to_dict("index")
 
 
-def filter_info(
-    info: pd.DataFrame,
-    split: str | None = None,
-    beat_type: str | None = None,
-    time_signature: str | None = None,
-) -> pd.DataFrame:
+def scope_exclusion(meta: dict) -> str | None:
     """
-    Select a subset of the dataset, e.g. split="train", beat_type="beat",
-    time_signature="4-4".
+    Why a performance is outside the experiment's scope, or None if it is
+    in scope: an ordinary 4/4 groove whose style is not labelled as swing,
+    shuffle or triplet (see `src/common/config.py`).
     """
-    if split is not None:
-        info = info[info["split"] == split]
-
-    if beat_type is not None:
-        info = info[info["beat_type"] == beat_type]
-
-    if time_signature is not None:
-        info = info[info["time_signature"] == time_signature]
-
-    return info
+    if meta.get("beat_type") != VALID_BEAT_TYPE:
+        return "not a beat (fill)"
+    if meta.get("time_signature") != VALID_TIME_SIGNATURE:
+        return "not 4/4"
+    style = str(meta.get("style", "")).lower()
+    if any(keyword in style for keyword in EXCLUDED_STYLE_KEYWORDS):
+        return "swing/shuffle/triplet style"
+    return None

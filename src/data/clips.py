@@ -44,7 +44,7 @@ def cut_clips(
     dropped. Clips with no drum notes are returned with an empty mask.
 
     `onsets` must be sorted and non-empty; `grid` is the 1/16 grid from
-    `sixteenth_grid`. `tempo` is the clip's average tempo in quarter notes
+    `note_grid(..., 16)`. `tempo` is the clip's average tempo in quarter notes
     per minute.
     """
     step = midi.resolution // 4

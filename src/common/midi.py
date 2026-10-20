@@ -1,5 +1,6 @@
-"""MIDI helpers: drum notes, tempo-aware note grids, and bar lines."""
+"""MIDI helpers: loading, drum notes, tempo-aware note grids and bar lines."""
 
+import copy
 from collections import Counter
 from pathlib import Path
 
@@ -68,20 +69,50 @@ def get_drum_notes(
     return onsets, pitches, velocities
 
 
-def get_bpm(midi: pretty_midi.PrettyMIDI) -> float:
+# GMD (Roland TD-11) pitches grouped as in the GMD paper. Everything else
+# (toms, cymbals) is "other".
+DRUM_CLASSES = {
+    36: "kick",
+    37: "snare", 38: "snare", 40: "snare",
+    22: "hihat", 26: "hihat", 42: "hihat", 44: "hihat", 46: "hihat",
+}
+
+
+def drum_classes(pitches: np.ndarray) -> np.ndarray:
+    """Map MIDI pitches to "kick", "snare", "hihat" or "other"."""
+    return np.asarray([DRUM_CLASSES.get(int(pitch), "other") for pitch in pitches])
+
+
+def with_drum_notes(
+    midi: pretty_midi.PrettyMIDI,
+    onsets: np.ndarray,
+    velocities: np.ndarray,
+) -> pretty_midi.PrettyMIDI:
     """
-    Return the tempo stored in the MIDI file.
+    Return a copy of `midi` whose drum notes have the given onsets and
+    velocities, in the order returned by `get_drum_notes`.
 
-    Groove MIDI files contain exactly one tempo event, which is the click
-    tempo the drummer played to. This is far more reliable than
-    `estimate_tempo()`, which typically returns double the real tempo.
+    Note durations, pitches and non-drum instruments are kept. The input
+    is not modified.
     """
-    _, tempi = midi.get_tempo_changes()
+    result = copy.deepcopy(midi)
+    notes = [
+        note
+        for instrument in result.instruments
+        if instrument.is_drum
+        for note in instrument.notes
+    ]
+    notes.sort(key=lambda note: (note.start, note.pitch))
+    if len(notes) != len(onsets) or len(notes) != len(velocities):
+        raise ValueError("onsets and velocities must match the drum notes")
 
-    if len(tempi) != 1:
-        raise ValueError(f"Expected a single tempo, found {len(tempi)}")
+    for note, onset, velocity in zip(notes, onsets, velocities):
+        duration = note.end - note.start
+        note.start = max(float(onset), 0.0)
+        note.end = note.start + duration
+        note.velocity = int(round(velocity))
 
-    return float(tempi[0])
+    return result
 
 
 def note_grid(
@@ -108,14 +139,6 @@ def note_grid(
         [midi.tick_to_time(k * step) for k in range(last_step + 1)],
         dtype=float,
     )
-
-
-def sixteenth_grid(
-    midi: pretty_midi.PrettyMIDI,
-    end_time: float,
-) -> np.ndarray:
-    """Return the tempo-aware 1/16 grid used for original clip membership."""
-    return note_grid(midi, end_time, subdivision=16)
 
 
 def nearest_grid_index(

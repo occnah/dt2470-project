@@ -1,8 +1,9 @@
 """
-Data: loading the Groove MIDI Dataset and preparing clips.
+Data: from GMD performances to clips and edited versions of them.
 
-Modules:
-    gmd.py       GMD metadata (info.csv) loading and filtering
-    clips.py     cutting performances into 2-bar clips
-    quantize.py  quantization (not used by the human baseline)
+    gmd.py         info.csv metadata and the dataset scope filter
+    clips.py       cutting performances into 2-bar clips
+    quantize.py    timing quantization and velocity normalization
+    humanize.py    uniform / Gaussian / 1/f timing jitter
+    conditions.py  the list of conditions (CONDITIONS) and how each is applied
 """

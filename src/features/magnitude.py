@@ -1,5 +1,6 @@
 """
-Magnitude features: the size of timing, IOI and velocity deviations.
+Magnitude features (`mag_*`): how large the timing, IOI and velocity
+deviations are, ignoring how they are arranged.
 
 Times are in seconds; standard deviations use ddof=0.
 """
@@ -9,11 +10,10 @@ import numpy as np
 from src.common.config import IOI_EVENT_TOLERANCE
 from src.common.midi import nearest_grid_index
 
+INSTRUMENTS = ("kick", "snare", "hihat")
 
-def grid_deviations(
-    onsets: np.ndarray,
-    grid: np.ndarray,
-) -> np.ndarray:
+
+def grid_deviations(onsets: np.ndarray, grid: np.ndarray) -> np.ndarray:
     """
     Signed distance (seconds) from each onset to its nearest grid point.
     Positive means the note was played late.
@@ -26,23 +26,18 @@ def group_onset_events(
     tolerance: float = IOI_EVENT_TOLERANCE,
 ) -> np.ndarray:
     """
-    Merge onsets within `tolerance` seconds of their neighbor into one
-    event, returning one representative time (the group's mean) per
-    event. `onsets` need not be sorted or unique.
+    Merge onsets within `tolerance` seconds of their neighbour into one
+    event and return each event's mean time. `onsets` need not be sorted.
 
-    This keeps the number of IOI events comparable across conditions:
-    quantization can pull two near-simultaneous onsets (e.g. a kick and
-    hi-hat struck a few milliseconds apart) exactly on top of each other,
-    which would otherwise change how many distinct events exist and let
-    IOI features partly detect quantization through that counting
-    artifact rather than through genuine timing deviation. The same
-    tolerance is applied to every condition.
+    Keeps the number of IOI events comparable across conditions: a kick and
+    hi-hat struck a few ms apart stay one event when quantization pulls
+    them exactly together.
     """
     if len(onsets) == 0:
         return np.asarray(onsets, dtype=float)
-    sorted_onsets = np.sort(onsets)
-    groups = [[sorted_onsets[0]]]
-    for time in sorted_onsets[1:]:
+    ordered = np.sort(onsets)
+    groups = [[ordered[0]]]
+    for time in ordered[1:]:
         if time - groups[-1][-1] <= tolerance:
             groups[-1].append(time)
         else:
@@ -50,35 +45,43 @@ def group_onset_events(
     return np.array([np.mean(group) for group in groups])
 
 
-def clip_features(
+def magnitude_features(
     onsets: np.ndarray,
     velocities: np.ndarray,
-    grid: np.ndarray,
-    grid_32: np.ndarray | None = None,
+    instruments: np.ndarray,
+    grid_16: np.ndarray,
+    grid_32: np.ndarray,
 ) -> dict[str, float]:
     """
-    Rhythmic features for one clip.
+    Magnitude features for one clip.
 
-    IOIs are taken between onset events (see `group_onset_events`), so
-    notes within `IOI_EVENT_TOLERANCE` seconds of each other (e.g. kick +
-    hi-hat struck together) count as one event. IOI features are NaN if
-    the clip has fewer than two distinct onset events.
+    - timing: mean absolute and SD of deviations from the 1/16 and the 1/32
+      grid, and the mean absolute 1/16 deviation per instrument (NaN when
+      the instrument is not played in the clip)
+    - IOI: mean and SD of intervals between onset events (NaN with fewer
+      than two events)
+    - velocity: mean, SD and range
     """
-    deviations = grid_deviations(onsets, grid)
+    deviations = grid_deviations(onsets, grid_16)
+    deviations_32 = grid_deviations(onsets, grid_32)
     iois = np.diff(group_onset_events(onsets))
 
     features = {
-        "note_count": len(onsets),
-        "timing_abs_mean": float(np.mean(np.abs(deviations))),
-        "timing_std": float(np.std(deviations)),
-        "ioi_mean": float(np.mean(iois)) if len(iois) else float("nan"),
-        "ioi_std": float(np.std(iois)) if len(iois) else float("nan"),
-        "velocity_mean": float(np.mean(velocities)),
-        "velocity_std": float(np.std(velocities)),
-        "velocity_range": float(np.ptp(velocities)),
+        "mag_timing_abs_mean": float(np.mean(np.abs(deviations))),
+        "mag_timing_std": float(np.std(deviations)),
+        "mag_timing32_abs_mean": float(np.mean(np.abs(deviations_32))),
+        "mag_timing32_std": float(np.std(deviations_32)),
     }
-    if grid_32 is not None:
-        deviations_32 = grid_deviations(onsets, grid_32)
-        features["timing_32_abs_mean"] = float(np.mean(np.abs(deviations_32)))
-        features["timing_32_std"] = float(np.std(deviations_32))
+    for instrument in INSTRUMENTS:
+        played = instruments == instrument
+        features[f"mag_{instrument}_timing_abs_mean"] = (
+            float(np.mean(np.abs(deviations[played]))) if played.any() else float("nan")
+        )
+    features.update({
+        "mag_ioi_mean": float(np.mean(iois)) if len(iois) else float("nan"),
+        "mag_ioi_std": float(np.std(iois)) if len(iois) else float("nan"),
+        "mag_velocity_mean": float(np.mean(velocities)),
+        "mag_velocity_std": float(np.std(velocities)),
+        "mag_velocity_range": float(np.ptp(velocities)),
+    })
     return features

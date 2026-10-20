@@ -1,168 +1,157 @@
-# Groove detection pipeline
+# How the code works
 
-## Run it
+The pipeline has three steps, each a script in `src/`:
 
-From the project root, with the dependencies installed in `env/`:
-
-```bash
-env/bin/python -m src.build_dataset
-env/bin/python -m src.build_dataset --conditions
-env/bin/python -m src.train_baseline
-env/bin/python -m pytest -q
+```
+GMD MIDI ──build_dataset──▶ features.csv ──run_experiments──▶ results/experiments/
+                                         └─run_ablation────▶ results/ablation/
 ```
 
-The input now defaults to the existing `data/groove/` folder. The commands write
-`data/features/human_features.csv` and `data/features/conditions_features.csv`.
-Each also writes a `_skipped.csv` listing unusable source files and reasons.
-Use `--input` and `--output` to override the locations.
+Three lists define the experiment, each in exactly one place:
 
-## What the code does
+| What | Where | Used by |
+|---|---|---|
+| Conditions | `CONDITIONS` in `src/data/conditions.py` | build, experiments, plots, tests |
+| Features and their groups | `FEATURE_GROUPS` in `src/features/__init__.py` | build, models, ablation |
+| Models | `MODELS` in `src/models/classifiers.py` | experiments, ablation |
 
-- `common/midi.py`: builds 1/16 and 1/32 grids in MIDI ticks, then converts them
-  through the performance's tempo map. Both quantization and timing features use
-  these grids. Exact halfway ties use the earlier grid point. The loader also
-  restores raw drum note-ons omitted by the MIDI duration parser, with their
-  original onset/velocity and zero duration, so every recorded drum hit is counted.
-- `build_dataset.py` main loop: before processing, each file is kept only if it
-  is an ordinary 4/4 beat/groove — `beat_type == "beat"` (fills excluded),
-  `time_signature == "4-4"`, and `style` not marked `swing` or `triplet`. This
-  filter only runs when GMD's `info.csv` was loaded; it has no effect on
-  `process_file` itself, which the synthetic tests call directly. The goal is
-  to measure "human vs quantized" rather than "swing vs straight" — a swung
-  groove forced onto a straight grid would be detectable for reasons
-  unrelated to quantization.
-- `data/quantize.py`: moves each onset toward its nearest grid point:
-  `new = original + strength * (target - original)`. It also provides a separate
-  transformation setting every drum velocity to 80. MIDI helpers return copies,
-  preserve pitches and note durations, and leave non-drum notes unchanged.
-- `build_dataset.py`: cuts the original into non-overlapping two-bar clips once.
-  Every version uses that original note membership, even if a transformed onset
-  moves across the clip boundary. Empty clips and unusable files are counted.
-- `features/magnitude.py`: extracts timing, inter-onset interval (IOI), and velocity
-  summaries from those matched notes. Existing feature names are preserved;
-  `timing_32_abs_mean` and `timing_32_std` add the finer-grid measurements.
-  IOIs are computed between onset *events* (`group_onset_events`), not raw
-  distinct onset times: onsets within `IOI_EVENT_TOLERANCE` (20ms) of each
-  other — e.g. a kick and hi-hat struck together — merge into one event.
-  Applied identically to every condition, so quantization pulling two such
-  onsets exactly together can't change the IOI event count on its own and
-  leak detectability through a counting artifact rather than real timing
-  deviation.
-- `tests/test_quantize.py`: checks partial strengths, tempo changes, boundary
-  membership, independent velocity normalization, and optional MIDI exports.
-- `models/baseline.py`: validates matched clips, trains logistic regression and
-  a timing-threshold rule, and evaluates each on held-out drummers.
-- `train_baseline.py`: runs the six comparisons and saves metrics, plots, run
-  settings, and full held-out predictions. `tests/test_baseline.py` checks the
-  pairing, thresholds, feature whitelist, and training-only scaling.
-- `ablation.py`: reruns the four 1/16 experiments with `timing_32_abs_mean`/
-  `timing_32_std` excluded from logistic regression's inputs, to check
-  whether their relationship to the 1/16 deviation at 50%+ quantization
-  strength was giving it a shortcut (see `WHATS_LEFT.md`). Reuses
-  `evaluate_table`'s new `conditions`/`feature_columns` parameters rather
-  than duplicating the leave-one-drummer-out protocol.
+To add a condition, feature or model, add it to its list; everything else
+picks it up.
 
-## Conditions and identifiers
+## 1. Building the dataset (`src/build_dataset.py`)
 
-Each usable source clip has seven rows in the conditions table:
+For every GMD file:
 
-| `condition` | Timing | Velocity |
-| --- | --- | --- |
-| `human` | Original | Original |
-| `quantized_16_25` | 25% toward 1/16 grid | Original |
-| `quantized_16_50` | 50% toward 1/16 grid | Original |
-| `quantized_16_75` | 75% toward 1/16 grid | Original |
-| `quantized_16_100` | Fully on 1/16 grid | Original |
-| `quantized_32_100` | Fully on 1/32 grid | Original |
-| `velocity_normalized` | Original | Constant 80 |
+1. **Scope filter** (`data/gmd.py`): keep ordinary 4/4 grooves. Fills, other
+   meters, and styles labelled swing, shuffle or triplet are skipped, because
+   a swung groove forced onto a straight grid would be detectable for reasons
+   unrelated to quantization. GMD's style labels are used because onset
+   positions alone did not separate swung from straight files. Plain `jazz`
+   is kept (its label does not say whether it swings).
+2. **Load** (`common/midi.py`): read the drum notes. `load_midi` also restores
+   drum hits whose note-off has the same tick as the note-on, which
+   pretty_midi would otherwise drop.
+3. **Grids**: 1/16 and 1/32 grids are placed in MIDI ticks and converted to
+   seconds through the file's tempo map, so they follow the recorded tempo.
+4. **Clips** (`data/clips.py`): cut into consecutive, non-overlapping 2-bar
+   clips from the first downbeat. A note belongs to the clip containing its
+   nearest 1/16 grid point. The incomplete clip at the end is dropped.
+5. **Conditions** (`data/conditions.py`): every condition is applied to the
+   *whole* performance. The notes, their order and pitches never change, so
+   each note keeps its original clip in every condition and every version of
+   a clip contains the same notes.
+6. **Features** (`features/`): measured on each clip's notes in each condition.
 
-`clip_id` uniquely identifies a row. `source_clip_id` links its seven versions
-and serves as the stable source identifier for paired/provenance analysis.
-`source_file`, `drummer`, `style`, `beat_type`, and `time_signature` retain
-the original GMD metadata (the latter two are also the fields the main-scope
-filter above is applied to). `split` is the existing GMD split, not a new
-drummer-disjoint split. `subdivision`, `strength`,
-and `normalized_velocity` describe the transformation; inapplicable values are
-blank. Human and velocity-only rows have strength 0.
+Output: one row per clip and condition in `data/features/features.csv`, a
+`features_skipped.csv` log, and `results/dataset/DATASET.md` with counts and
+mean feature values per condition (a quick check that every edit does what it
+should).
 
-Times and timing features are in seconds. `tempo` is quarter notes per minute.
-`timing_abs_mean` and `timing_std` measure deviations from the 1/16 grid;
-`timing_32_*` uses the 1/32 grid. IOIs are between distinct onset times, pooling
-all drums. Exact simultaneous hits count as one onset event; a clip with only
-one distinct onset gets missing IOI values. Velocity summaries pool all drum
-notes and are in MIDI velocity units.
+### Conditions
 
-## Optional MIDI exports and scope
+| Family | Conditions | What it does | RQ |
+|---|---|---|---|
+| `human` | `human` | original | reference |
+| `quantize` | `quantize_16_05` … `quantize_16_100` (5, 10, 15, 20, 25, 35, 50, 75, 100%), `quantize_32_100` | move each onset that share of the way to its nearest 1/16 (or 1/32) grid point | 1 |
+| `velocity` | `velocity_25` … `velocity_100` | move each velocity that share of the way to 80; timing unchanged | 1 |
+| `humanize` | `humanize_{uniform,gaussian,pink}_{5,10,20}ms`, `…_matched` | full 1/16 quantization plus timing jitter; velocity unchanged | 2, 3 |
+| `shuffle` | `deviations_shuffled` | each clip's own human deviations, randomly reassigned among its notes | 3 |
 
-Add `--midi-output data/generated` to the conditions command to save six
-transformed full performances per usable file, under condition/source paths.
-These are full performances, not separately cut clip files. Original MIDI is
-never rewritten. MIDI exports round fractional ticks to the native resolution;
-the feature table is computed directly in memory before that rounding. Use
-`load_midi` when reading files if zero-duration drum hits must be retained.
+Humanization details (`data/humanize.py`):
 
-Dataset construction preserves the original GMD split labels. The classifier
-uses the separate drummer-held-out evaluation below. No style filtering or
-artificial humanization is applied.
+- The three jitter kinds have the **same SD at each level**, so they differ
+  only in distribution shape (uniform vs Gaussian) and in correlation over
+  time (pink = 1/f noise, slow drifts like human timing). Each note is
+  jittered separately, as in DAW humanize functions, in onset order.
+- Jitter is drawn once per performance and kind, and the 5, 10 and 20 ms
+  levels use the same sequence at different scales (common random numbers),
+  so level differences are not random noise.
+- **Matched level**: within each clip the jitter is shifted and scaled to the
+  mean and SD of that clip's human deviations. The deviation size is then the
+  same as in the human clip, so only structure can tell them apart.
+- **Shuffled control**: the clip keeps exactly its human set of deviations;
+  only which note has which is random. This is the cleanest test of RQ3.
+- Seeds come from the project seed plus the file and jitter kind
+  (`rng_for`), so results do not depend on processing order.
 
-## Full run on 11 October 2026
+### Features
 
-577 of 1,150 performances produced 10,804 original clips; 573 performances were
-too short for a complete two-bar clip under the existing clipping rule. The
-conditions table contains 75,628 rows, and 3,462 transformed MIDI files were
-exported. The loader recovered 796 omitted drum hits across 204 usable files.
-The 36 synthetic tests and full-data checks pass. The audit and feature plots are
-saved in [results/DATASET_CHECKS.md](results/DATASET_CHECKS.md), with the plot in
-`results/dataset_checks.png`, after checking every table row and MIDI export.
-These small summaries are tracked in Git; full feature tables and generated
-MIDI remain ignored under `data/`. Classifier results are reported separately.
+All in seconds or MIDI velocity units; standard deviations use ddof=0.
 
-## Baseline evaluation on 18 October 2026
+| Group | Features | Meaning |
+|---|---|---|
+| context | `tempo`, `note_count` | the same in every version of a clip; let models interpret the rest |
+| `mag_timing` | `mag_timing_abs_mean`, `mag_timing_std`, `mag_timing32_*`, `mag_{kick,snare,hihat}_timing_abs_mean` | size of deviations from the 1/16 and 1/32 grid, overall and per instrument |
+| `mag_ioi` | `mag_ioi_mean`, `mag_ioi_std` | inter-onset intervals between events (onsets within 20 ms count as one event, so quantization cannot change the event count) |
+| `mag_velocity` | `mag_velocity_mean`, `_std`, `_range` | size of velocity variation |
+| `struct_timing` | `struct_timing_autocorr` | lag-1 autocorrelation of deviations over successive hits |
+| | `struct_timing_position_r2` | share of deviation variance explained by position in the beat |
+| | `struct_timing_instrument_r2` | share explained by the instrument |
+| | `struct_chord_spread_ratio` | spread between *different* instruments on the same grid point, relative to the overall spread |
+| `struct_velocity` | `struct_velocity_position_r2` | share of velocity variance explained by position in the beat (accents) |
 
-Each experiment compares human clips with one of the six edited conditions,
-with edited clips as class 1. It trains on nine drummers and tests on the tenth,
-rotating through all ten. Related clips and versions stay together. The original
-GMD split is not used for this evaluation; there is no extra untouched test set.
+Structure features are **scale-free**: multiplying all deviations by a
+constant does not change them. Partial quantization does exactly that, so
+structure features cannot detect it by construction. A clip with no timing
+spread (fully quantized) gets 0 for its timing structure features in every
+condition. Per-instrument timing, IOIs and chord spread can be undefined
+(NaN), e.g. when a clip has no snare; models fill those with the training
+median.
 
-Logistic regression uses the ten listed numerical features through a
-`StandardScaler` fitted inside each training fold. Settings are fixed: C=1,
-lbfgs, max_iter=2000, seed=42, probability cutoff=0.5. IDs, drummer, condition,
-and transformation metadata never enter the classifier.
+## 2. Experiments (`src/run_experiments.py`)
 
-The comparison rule predicts an edit for a small mean absolute timing deviation.
-Its cutoff maximizes balanced accuracy on training rows only, with tied cutoffs
-resolved toward the lowest value. It uses the matching 1/16 or 1/32 grid;
-velocity-only uses 1/16 timing as a control and gets exactly 50% accuracy.
+Each edited condition is its own balanced binary task: the human version of
+every clip (class 0) against that condition's version of the same clips
+(class 1). `models/evaluation.py`:
 
-The full run produced 120 method/fold rows and 259,296 held-out predictions;
-all 64 tests pass. Mean F1 across drummers for logistic regression is 0.745 at
-25% quantization and 0.947 at 50%, versus 0.647 and 0.799 for the timing rule.
-Full quantization and velocity normalization are almost perfectly classified.
-These scores concern synthetic edits of this dataset; direct feature signatures
-can make detection easy and do not establish what listeners can hear.
+- **Validates** the table: every source clip has every condition once,
+  versions agree on drummer, file, tempo and note count, and features are
+  usable.
+- **Leave-one-drummer-out**: train on all drummers but one, test on the
+  held-out drummer, for every drummer. All versions of a clip and all clips
+  of a performance stay with their drummer; the code checks for leakage.
+- **Models** (`models/classifiers.py`) with fixed settings and no
+  hyperparameter search: logistic regression, random forest, RBF SVM, and a
+  timing rule (one cutoff on mean absolute timing deviation, direction learned
+  from training data) as a reference. Missing-value filling and scaling are
+  fitted on the training fold only.
+- **Metrics**: accuracy, precision, recall and F1 for the edited class, per
+  held-out drummer and pooled.
+- **Reliability**: a condition is reliably detected by a model when F1 ≥ 0.9
+  for every held-out drummer (`RELIABLE_F1` in `config.py`, fixed before the
+  final run). `reliability.csv` gives, per model and series, the lowest
+  quantization strength from which detection stays reliable, and the largest
+  jitter up to which it stays reliable.
 
-See [results/baseline/MODEL_RESULTS.md](results/baseline/MODEL_RESULTS.md) for all
-conditions, confusion matrices, and per-drummer plots. `metrics.csv` contains
-pooled scores plus equal-weight drummer means and sample SDs; `fold_metrics.csv`
-records each test drummer and training cutoff. `run_config.json` stores the
-fixed settings, feature list, input hash, and package versions. Full predictions
-are in ignored `data/features/baseline_predictions.csv`.
+Outputs in `results/experiments/`: `RESULTS.md`, `metrics.csv`,
+`fold_metrics.csv`, `reliability.csv`, `coefficients.csv` (logistic
+regression), `run_config.json` (settings, input hash, versions) and figures.
+Full predictions go to `data/features/predictions.csv`.
 
-Note: this run predates the 4/4-beat/swing-triplet filter and the IOI event
-grouping fix above. Re-running `train_baseline` on the filtered dataset gave
-nearly identical scores (within ~0.01 F1 at every quantization level), so the
-filter did not change the conclusions here — see the regenerated
-`results/baseline/` files for the current numbers; the counts/scores in this
-section are left as originally written and are now slightly stale.
+## 3. Feature ablation (`src/run_ablation.py`)
 
-## Feature ablation
+Reruns the evaluation (logistic regression and random forest) with:
+all features, magnitude only, structure only, and all features minus one
+group. Outputs in `results/ablation/`: `ABLATION.md`, `ablation_metrics.csv`,
+figures and logistic-regression coefficients.
 
-`src/ablation.py` reruns the four 1/16 experiments with the 1/32 timing
-features removed from logistic regression, since at 50%+ 1/16 quantization
-strength the 1/16 and 1/32 deviation features become related by
-construction (moving further toward the 1/16 grid also reduces the 1/32
-deviation). The timing-threshold baseline is unaffected by design on these
-conditions — it already uses `timing_abs_mean` alone — and is checked, not
-assumed, to be identical in both runs. See
-[results/ablation/ABLATION_RESULTS.md](results/ablation/ABLATION_RESULTS.md)
-once it's been run (`env/bin/python -m src.ablation`) for the comparison.
+## Tests (`tests/`)
+
+Synthetic MIDI files (`tests/synthetic.py`) and small arrays; no GMD needed.
+They check the grid and clip logic, every condition's guarantees (nominal
+jitter size, matched mean/SD per clip, shuffle keeps the deviation set,
+determinism, structure features unchanged under partial edits), the feature
+definitions, the timing rule, leakage-free folds and training-only scaling.
+
+## Things to keep in mind when interpreting results
+
+- Full quantization and full velocity normalization are detectable by
+  construction (deviation or velocity spread exactly 0): sanity checks.
+- Matched jitter has the human mean and SD, but its mean *absolute* deviation
+  still depends on the distribution shape; the shuffled control is exact.
+- Pink jitter is scaled over the whole performance, so within a 2-bar clip
+  its SD is smaller than the nominal level.
+- Partial velocity normalization gives non-integer velocities; features use
+  them directly, exported MIDI rounds them.
+- Results describe detection of synthetic edits of this GMD subset, not what
+  listeners hear.
