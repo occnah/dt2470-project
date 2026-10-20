@@ -1,0 +1,21 @@
+model,series,rule,level
+logistic_regression,quantize_16,reliable from,0.75
+logistic_regression,velocity,reliable from,0.5
+logistic_regression,humanize_uniform,reliable up to,20.0
+logistic_regression,humanize_gaussian,reliable up to,10.0
+logistic_regression,humanize_pink,reliable up to,10.0
+random_forest,quantize_16,reliable from,0.75
+random_forest,velocity,reliable from,0.5
+random_forest,humanize_uniform,reliable up to,20.0
+random_forest,humanize_gaussian,reliable up to,20.0
+random_forest,humanize_pink,reliable up to,10.0
+svm,quantize_16,reliable from,0.75
+svm,velocity,reliable from,0.5
+svm,humanize_uniform,reliable up to,20.0
+svm,humanize_gaussian,reliable up to,20.0
+svm,humanize_pink,reliable up to,10.0
+timing_rule,quantize_16,reliable from,0.75
+timing_rule,velocity,reliable from,
+timing_rule,humanize_uniform,reliable up to,10.0
+timing_rule,humanize_gaussian,reliable up to,10.0
+timing_rule,humanize_pink,reliable up to,5.0

@@ -1,38 +1,53 @@
 # Groove Detection
 
 Can a classifier tell real drum performances from quantized and artificially
-humanized versions? Data: Groove MIDI Dataset (GMD).
+humanized versions, and at what level does each become reliably detectable?
+Data: the Groove MIDI Dataset (GMD).
 
-Current stage: **first classifier results** — logistic regression and a timing
-rule evaluated on matched conditions with each drummer held out in turn.
-See [CODE_EXPLAINER.md](CODE_EXPLAINER.md) for the pipeline and table columns.
-The checked dataset summary and plots are in [results/DATASET_CHECKS.md](results/DATASET_CHECKS.md).
-Classifier metrics and plots are in [results/baseline/MODEL_RESULTS.md](results/baseline/MODEL_RESULTS.md).
+Research questions:
+
+1. How much quantization (strength, grid size, velocity normalization) is needed
+   before a classifier reliably detects it?
+2. Can a classifier tell real drumming from quantized-then-humanized drumming,
+   as produced by DAW-style "humanize" functions?
+3. Which features carry the signal: the size of timing and velocity deviations,
+   or their structure (correlation over time, metric position, coordination
+   between instruments)?
+
+See [CODE_EXPLAINER.md](CODE_EXPLAINER.md) for how the code works.
 
 ## Layout
 
 ```
 src/
-  build_dataset.py       entry point: GMD -> human / matched condition features
-  train_baseline.py      entry point: features -> held-out-drummer evaluation
-  models/
-    baseline.py          logistic regression, timing rule, grouped evaluation
+  build_dataset.py      1. GMD -> data/features/features.csv (all conditions)
+  run_experiments.py    2. features -> results/experiments/  (RQ1, RQ2)
+  run_ablation.py       3. features -> results/ablation/     (RQ3)
   common/
-    config.py            clip length, seed, data paths
-    midi.py              drum notes, tempo-aware 1/16 and 1/32 grids, bar lines
+    config.py           paths, seed, dataset scope, analysis settings
+    midi.py             MIDI loading, tempo-aware grids, bar lines, drum classes
   data/
-    gmd.py               info.csv loading / filtering
-    clips.py             cut performances into 2-bar clips
-    quantize.py          partial timing quantization and velocity normalization
+    gmd.py              info.csv metadata and the scope filter
+    clips.py            cut performances into 2-bar clips
+    quantize.py         timing quantization and velocity normalization
+    humanize.py         uniform / Gaussian / 1/f timing jitter
+    conditions.py       THE list of conditions and how each is applied
   features/
-    magnitude.py         timing / IOI / velocity features
-tests/                   synthetic data, no GMD needed
-results/                 tracked summaries and plots for sharing
-  baseline/              metrics, fold results, configuration, plots, report
-data/                    NOT in git
-  groove/                GMD as downloaded (contains info.csv)
-  generated/             optional transformed full-performance MIDI exports
-  features/              generated feature tables
+    __init__.py         feature groups and the extraction entry point
+    magnitude.py        mag_*    size of deviations
+    structure.py        struct_* arrangement of deviations (scale-free)
+  models/
+    classifiers.py      THE list of models
+    evaluation.py       validation, matched pairs, leave-one-drummer-out
+  reporting/            markdown tables and figures for results/
+tests/                  synthetic data, no GMD needed
+results/                generated summaries and figures (tracked in git)
+  dataset/              what the feature table contains
+  experiments/          detection per condition and model
+  ablation/             detection per feature group
+data/                   NOT in git
+  groove/               GMD as downloaded (contains info.csv)
+  features/             feature table and full predictions
 ```
 
 ## Setup
@@ -46,33 +61,27 @@ Download GMD into `data/groove/` so that `data/groove/info.csv` exists.
 
 ## Running
 
-Run every command from the repository root.
+Run every command from the repository root, in this order.
 
 ```bash
 env/bin/python -m src.build_dataset
 ```
 
-Build all seven conditions (including the same human rows):
-
 ```bash
-env/bin/python -m src.build_dataset --conditions
+env/bin/python -m src.run_experiments
 ```
 
-Optionally also export transformed full performances for playback:
-
 ```bash
-env/bin/python -m src.build_dataset --conditions --midi-output data/generated
+env/bin/python -m src.run_ablation
 ```
-
-Run the six balanced human-versus-edited experiments:
-
-```bash
-env/bin/python -m src.train_baseline
-```
-
-Small summaries go into `results/baseline/`. Full held-out predictions go into
-ignored `data/features/baseline_predictions.csv`.
 
 ```bash
 env/bin/python -m pytest
 ```
+
+On a 10-core laptop, building takes about 3 minutes, the experiments about 35
+minutes and the ablation about 50. Both experiment scripts accept `--models`
+and `--conditions` to run a subset, and `--report-only` to redraw the report
+and figures from saved results without retraining. Add
+`--midi-output data/generated` to the build to save every edited performance
+as MIDI for listening.

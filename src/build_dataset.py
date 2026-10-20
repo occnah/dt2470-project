@@ -1,61 +1,39 @@
-"""Build matched human and transformed feature tables from two-bar GMD clips."""
+"""
+Build the feature table: every in-scope GMD performance is cut into 2-bar
+clips once, every condition in `src/data/conditions.py` is applied to the
+whole performance, and features are measured on each clip's notes.
+
+Output: one row per clip and condition in data/features/features.csv, a log
+of skipped files, and a dataset summary in results/dataset/.
+
+    env/bin/python -m src.build_dataset
+    env/bin/python -m src.build_dataset --midi-output data/generated   # also save MIDI
+"""
 
 import argparse
 from collections import Counter
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from src.common.config import (
-    EXCLUDED_STYLE_KEYWORDS, FEATURES_DIR, HUMAN, NORMALIZED_VELOCITY,
-    QUANTIZATION_CONDITIONS, RAW_DIR, VALID_BEAT_TYPE, VALID_TIME_SIGNATURE,
-)
-from src.common.midi import get_drum_notes, load_midi, note_grid
+from src.common.config import FEATURES_TABLE, RAW_DIR, RESULTS_DIR
+from src.common.midi import get_drum_notes, load_midi, note_grid, with_drum_notes
 from src.data.clips import cut_clips
-from src.data.gmd import load_info
-from src.data.quantize import normalize_velocity_midi, quantize_midi, quantize_onsets
-from src.features.magnitude import clip_features
+from src.data.conditions import CONDITIONS, Condition, Performance, apply_condition
+from src.data.gmd import load_metadata, scope_exclusion
+from src.features import extract_features
+from src.reporting.dataset_summary import write_dataset_summary
 
 
 class SkipFile(Exception):
     """Raised when a whole MIDI file cannot be used."""
 
 
-def out_of_scope_reason(meta: dict) -> str | None:
+def load_performance(path: Path, key: str):
     """
-    Return why this performance is out of scope for the main experiment,
-    or None if it's in scope.
+    Read one MIDI file and cut it into clips.
 
-    Scope is ordinary 4/4 beats/grooves: fills are excluded (`beat_type`),
-    as are performances outside 4/4 (`time_signature`) and any whose
-    style is explicitly marked as a swing or triplet feel. This is a
-    dataset-level filter applied once per file in `main`, independent of
-    per-clip processing in `process_file`, and only when GMD metadata was
-    loaded (an empty `meta` from a missing info.csv is not filtered).
-    """
-    if meta.get("beat_type") != VALID_BEAT_TYPE:
-        return "not a beat (fill)"
-    if meta.get("time_signature") != VALID_TIME_SIGNATURE:
-        return "not 4/4"
-    style = str(meta.get("style", "")).lower()
-    if any(keyword in style for keyword in EXCLUDED_STYLE_KEYWORDS):
-        return "swing/triplet style"
-    return None
-
-
-def process_file(
-    path: Path,
-    source_file: str,
-    meta: dict,
-    include_conditions: bool = False,
-    midi_output: Path | None = None,
-) -> tuple[list[dict], int]:
-    """
-    Cut the original once, then measure the same notes in every condition.
-
-    Returns (rows, number of clips skipped because they had no drum notes).
-    Raises SkipFile if the file is unreadable or unusable.
+    Returns (midi, Performance). Raises SkipFile if the file is unusable.
     """
     try:
         midi = load_midi(path)
@@ -65,165 +43,135 @@ def process_file(
     if not midi.time_signature_changes:
         raise SkipFile("no time signature")
 
-    onsets, _, velocities = get_drum_notes(midi)
-
+    onsets, pitches, velocities = get_drum_notes(midi)
     if len(onsets) == 0:
         raise SkipFile("no drum notes")
 
-    grid = note_grid(midi, midi.get_end_time(), 16)
-    grid_32 = note_grid(midi, midi.get_end_time(), 32)
-    clips = cut_clips(midi, onsets, grid)
-
+    end = midi.get_end_time()
+    grid_16 = note_grid(midi, end, 16)
+    grid_32 = note_grid(midi, end, 32)
+    clips = cut_clips(midi, onsets, grid_16)
     if not clips:
         raise SkipFile("shorter than one clip")
 
+    return midi, Performance(key, onsets, velocities, pitches, grid_16, grid_32, clips)
+
+
+def condition_columns(condition: Condition) -> dict:
+    """Provenance columns describing a condition (not model inputs)."""
+    return {
+        "condition": condition.name,
+        "family": condition.family,
+        "subdivision": condition.subdivision,
+        "strength": condition.strength,
+        "jitter": condition.jitter,
+        "jitter_sd_ms": condition.jitter_sd_ms,
+        "matched": condition.matched,
+    }
+
+
+def process_file(
+    path: Path,
+    source_file: str,
+    meta: dict,
+    conditions: tuple[Condition, ...] = CONDITIONS,
+    midi_output: Path | None = None,
+) -> tuple[list[dict], int]:
+    """
+    Feature rows for every clip of one file in every condition.
+
+    Returns (rows, number of clips skipped because they had no drum notes).
+    Raises SkipFile if the file is unusable.
+    """
+    midi, performance = load_performance(path, source_file)
+    clips = [clip for clip in performance.clips if clip.notes.any()]
+    empty_clips = len(performance.clips) - len(clips)
+
     rows = []
-    empty_clips = 0
-    variants = [(HUMAN, None, 0.0, None, onsets, velocities)]
-    if include_conditions:
-        for condition, subdivision, strength in QUANTIZATION_CONDITIONS:
-            target_grid = grid if subdivision == 16 else grid_32
-            variants.append((
-                condition, subdivision, strength, None,
-                quantize_onsets(onsets, target_grid, strength), velocities,
-            ))
-        variants.append((
-            "velocity_normalized", None, 0.0, NORMALIZED_VELOCITY,
-            onsets, np.full_like(velocities, NORMALIZED_VELOCITY),
-        ))
+    for condition in conditions:
+        onsets, velocities = apply_condition(condition, performance)
 
-    for clip in clips:
-        if not clip.notes.any():
-            empty_clips += 1
-            continue
+        if midi_output is not None and condition.family != "human":
+            destination = midi_output / condition.name / source_file
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with_drum_notes(midi, onsets, velocities).write(str(destination))
 
-        source_clip_id = f"{Path(source_file).with_suffix('')}_clip{clip.index:03d}"
-        for condition, subdivision, strength, velocity, starts, values in variants:
+        for clip in clips:
+            source_clip_id = f"{Path(source_file).with_suffix('')}_clip{clip.index:03d}"
+            notes = clip.notes
             rows.append({
-                "clip_id": (
-                    source_clip_id if condition == HUMAN
-                    else f"{source_clip_id}__{condition}"
-                ),
+                "clip_id": f"{source_clip_id}__{condition.name}",
                 "source_clip_id": source_clip_id,
                 "source_file": source_file,
                 "drummer": meta.get("drummer"),
                 "style": meta.get("style"),
-                "beat_type": meta.get("beat_type"),
-                "time_signature": meta.get("time_signature"),
-                "split": meta.get("split"),
-                "tempo": clip.tempo,
+                "gmd_split": meta.get("split"),
                 "clip_start": clip.start,
                 "clip_end": clip.end,
-                "condition": condition,
-                "subdivision": subdivision,
-                "strength": strength,
-                "normalized_velocity": velocity,
-                **clip_features(starts[clip.notes], values[clip.notes], grid, grid_32),
+                "tempo": clip.tempo,
+                "note_count": int(notes.sum()),
+                **condition_columns(condition),
+                **extract_features(
+                    onsets[notes], velocities[notes], performance.pitches[notes],
+                    performance.grid_16, performance.grid_32,
+                ),
             })
-
-    if include_conditions and midi_output is not None and rows:
-        for condition, subdivision, strength in QUANTIZATION_CONDITIONS:
-            destination = midi_output / condition / source_file
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            quantize_midi(midi, subdivision, strength).write(str(destination))
-        destination = midi_output / "velocity_normalized" / source_file
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        normalize_velocity_midi(midi).write(str(destination))
-
     return rows, empty_clips
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Build two-bar human features, optionally with matched transformations."
-    )
-    parser.add_argument("--input", type=Path, default=RAW_DIR)
-    parser.add_argument(
-        "--output",
-        type=Path,
-        help="Default: data/features/human_features.csv (conditions_features.csv with --conditions)",
-    )
-    parser.add_argument(
-        "--conditions", action="store_true",
-        help="Include five timing-quantized conditions and independent velocity normalization.",
-    )
-    parser.add_argument(
-        "--midi-output", type=Path,
-        help="Optionally save transformed full performances here; requires --conditions.",
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--input", type=Path, default=RAW_DIR, help="GMD folder containing info.csv")
+    parser.add_argument("--output", type=Path, default=FEATURES_TABLE)
+    parser.add_argument("--summary", type=Path, default=RESULTS_DIR / "dataset")
+    parser.add_argument("--midi-output", type=Path, help="Also save every edited performance as MIDI here")
     args = parser.parse_args()
     if not args.input.is_dir():
         parser.error(f"Input directory does not exist: {args.input}")
-    if args.midi_output is not None and not args.conditions:
-        parser.error("--midi-output requires --conditions")
-    if args.output is None:
-        filename = "conditions_features.csv" if args.conditions else "human_features.csv"
-        args.output = FEATURES_DIR / filename
 
-    files = sorted(
-        path
-        for path in args.input.rglob("*")
-        if path.suffix.lower() in (".mid", ".midi")
-    )
-    print(f"Found {len(files)} MIDI files in {args.input}")
+    files = sorted(p for p in args.input.rglob("*") if p.suffix.lower() in (".mid", ".midi"))
     if not files:
         parser.error(f"No MIDI files found in {args.input}")
+    metadata = load_metadata(args.input)
+    print(f"Found {len(files)} MIDI files in {args.input}; {len(CONDITIONS)} conditions")
+    if not metadata:
+        print("No info.csv found: no scope filter, drummer and style will be empty")
 
-    metadata = {}
-    if (args.input / "info.csv").exists():
-        info = load_info(args.input)
-        metadata = info.set_index("midi_filename").to_dict("index")
-    else:
-        print("No info.csv found; drummer and style will be empty")
-
-    rows = []
-    skipped_files = Counter()
-    skipped_records = []
+    rows, skipped = [], []
     empty_clips = 0
-
     for index, path in enumerate(files, 1):
         source_file = path.relative_to(args.input).as_posix()
         meta = metadata.get(source_file, {})
-
-        if metadata:
-            reason = out_of_scope_reason(meta)
-            if reason is not None:
-                skipped_files[reason] += 1
-                skipped_records.append({"source_file": source_file, "reason": reason})
-                continue
-
+        reason = scope_exclusion(meta) if metadata else None
         try:
-            file_rows, file_empty_clips = process_file(
-                path, source_file, meta,
-                include_conditions=args.conditions, midi_output=args.midi_output,
-            )
-        except SkipFile as reason:
-            skipped_files[str(reason)] += 1
-            skipped_records.append({"source_file": source_file, "reason": str(reason)})
+            if reason is not None:
+                raise SkipFile(reason)
+            file_rows, file_empty = process_file(path, source_file, meta, midi_output=args.midi_output)
+        except SkipFile as error:
+            skipped.append({"source_file": source_file, "reason": str(error)})
             continue
-
         rows.extend(file_rows)
-        empty_clips += file_empty_clips
+        empty_clips += file_empty
         if index % 100 == 0:
-            print(f"Processed {index}/{len(files)} files", flush=True)
+            print(f"  {index}/{len(files)} files", flush=True)
 
     if not rows:
-        parser.error("No usable clips found; no feature table was written")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(args.output, index=False)
-    skipped_output = args.output.with_name(f"{args.output.stem}_skipped.csv")
-    pd.DataFrame(skipped_records, columns=["source_file", "reason"]).to_csv(
-        skipped_output, index=False
-    )
+        parser.error("No usable clips found; nothing was written")
 
-    print(f"Files used:    {len(files) - sum(skipped_files.values())}")
-    for reason, count in sorted(skipped_files.items()):
-        print(f"Files skipped ({reason}): {count}")
-    print(f"Clips skipped (no drum notes): {empty_clips}")
-    print(f"Original clips: {sum(row['condition'] == HUMAN for row in rows)}")
-    print(f"Feature rows:   {len(rows)}")
-    print(f"Saved: {args.output}")
-    print(f"Skip log: {skipped_output}")
+    table = pd.DataFrame(rows)
+    skipped = pd.DataFrame(skipped, columns=["source_file", "reason"])
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(args.output, index=False)
+    skipped_path = args.output.with_name(f"{args.output.stem}_skipped.csv")
+    skipped.to_csv(skipped_path, index=False)
+    write_dataset_summary(table, skipped, len(files), empty_clips, args.summary)
+
+    print(f"Files used: {table.source_file.nunique()} of {len(files)}")
+    for reason, count in sorted(Counter(skipped.reason).items()):
+        print(f"  skipped ({reason}): {count}")
+    print(f"Clips: {table.source_clip_id.nunique()} ({empty_clips} empty clips skipped)")
+    print(f"Rows:  {len(table)} ({len(CONDITIONS)} conditions)")
+    print(f"Saved: {args.output}, {skipped_path}, {args.summary / 'DATASET.md'}")
 
 
 if __name__ == "__main__":
