@@ -1,9 +1,9 @@
 # How the code works
 
-The pipeline has three steps, each a script in `src/`:
+The pipeline has four steps, each a script in `src/`:
 
 ```
-GMD MIDI ──build_dataset──▶ features.csv ──run_experiments──▶ results/experiments/
+GMD MIDI ──build_dataset──▶ features.csv ──run_experiments──▶ results/experiments/ ──error_analysis──▶ results/error_analysis/
                                          └─run_ablation────▶ results/ablation/
 ```
 
@@ -27,7 +27,9 @@ For every GMD file:
    a swung groove forced onto a straight grid would be detectable for reasons
    unrelated to quantization. GMD's style labels are used because onset
    positions alone did not separate swung from straight files. Plain `jazz`
-   is kept (its label does not say whether it swings).
+   is kept (its label does not say whether it swings). See "Things to keep
+   in mind" below: the error analysis found this filter is not perfectly
+   clean.
 2. **Load** (`common/midi.py`): read the drum notes. `load_midi` also restores
    drum hits whose note-off has the same tick as the note-on, which
    pretty_midi would otherwise drop.
@@ -135,13 +137,57 @@ all features, magnitude only, structure only, and all features minus one
 group. Outputs in `results/ablation/`: `ABLATION.md`, `ablation_metrics.csv`,
 figures and logistic-regression coefficients.
 
+## 4. Error analysis (`src/error_analysis.py`)
+
+Reads `features.csv` and the full predictions saved by `run_experiments`
+(no retraining) and reports false-positive/false-negative rates by drummer,
+GMD style, and tempo bucket, for five representative conditions -- one well
+below the reliability threshold, one at it, and one per research question
+-- plus example clip IDs for the worst group in each breakdown. Groups with
+fewer than 20 clips on either side are omitted as too small to read a rate
+from.
+
+Findings (full tables in `results/error_analysis/ERROR_ANALYSIS.md`):
+
+- **Which drummer is hardest to detect depends on the edit type.**
+  `drummer6` has the highest false-negative rate specifically for
+  quantization (0.347 at 25% strength vs. 0.157 overall; 0.095 at 75% vs.
+  0.014 overall), but is unremarkable for velocity, humanization or the
+  shuffle control. `drummer2` is the reverse: highest false-negative rate
+  for velocity normalization, humanization and the shuffle control (0.20 to
+  0.39 vs. 0.135 to 0.179 overall), but near the lowest for quantization at
+  75%. This lines up with the RQ3 finding that quantization is detected
+  mainly through magnitude-timing features while humanization/shuffle lean
+  on structure: plausibly these two drummers differ specifically in
+  whichever feature matters for each edit type, though we have not
+  confirmed this by inspecting their raw feature distributions directly.
+- **The scope filter has a residual gap.** A handful of GMD sub-styles whose
+  label does not contain `swing`, `shuffle`, or `triplet`, but plausibly
+  still has a non-straight feel (`jazz/fast`, `jazz/fusion`,
+  `latin/venezuelan-joropo`), recur as the worst or near-worst style group
+  across several independent conditions, with false-negative rates far
+  above the condition average (e.g. 0.92 for `jazz/fast` on `velocity_25`
+  vs. 0.150 overall; 1.00 for `latin/venezuelan-joropo` on
+  `quantize_16_25` vs. 0.157 overall, though that group is only 20 clips).
+  These groups are small, so some of this could be sampling noise, but the
+  same handful of labels recurring across otherwise unrelated conditions
+  makes that a less likely sole explanation.
+- **Velocity normalization is harder to detect at fast tempos** (150+ BPM:
+  false-negative rate 0.299 vs. 0.150 overall); this tempo pattern is
+  weaker or absent for the other conditions.
+- **At `quantize_16_75` (reliable overall), the few remaining errors
+  concentrate in exactly the same hardest cases as `quantize_16_25`**
+  (`drummer6`, the small jazz/latin style groups) -- the tail of a real
+  difficulty, not unrelated noise.
+
 ## Tests (`tests/`)
 
 Synthetic MIDI files (`tests/synthetic.py`) and small arrays; no GMD needed.
 They check the grid and clip logic, every condition's guarantees (nominal
 jitter size, matched mean/SD per clip, shuffle keeps the deviation set,
 determinism, structure features unchanged under partial edits), the feature
-definitions, the timing rule, leakage-free folds and training-only scaling.
+definitions, the timing rule, leakage-free folds and training-only scaling,
+and the error-analysis grouping/reporting logic on synthetic predictions.
 
 ## Things to keep in mind when interpreting results
 
@@ -153,5 +199,7 @@ definitions, the timing rule, leakage-free folds and training-only scaling.
   its SD is smaller than the nominal level.
 - Partial velocity normalization gives non-integer velocities; features use
   them directly, exported MIDI rounds them.
+- The style-keyword scope filter is not perfectly clean: see the error
+  analysis above for specific sub-styles that likely slip through.
 - Results describe detection of synthetic edits of this GMD subset, not what
   listeners hear.
