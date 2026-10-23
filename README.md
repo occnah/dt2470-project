@@ -14,8 +14,6 @@ Research questions:
    or their structure (correlation over time, metric position, coordination
    between instruments)?
 
-See [CODE_EXPLAINER.md](CODE_EXPLAINER.md) for how the code works.
-
 ## Layout
 
 ```
@@ -23,6 +21,7 @@ src/
   build_dataset.py      1. GMD -> data/features/features.csv (all conditions)
   run_experiments.py    2. features -> results/experiments/  (RQ1, RQ2)
   run_ablation.py       3. features -> results/ablation/     (RQ3)
+  error_analysis.py     4. features + predictions -> results/error_analysis/
   common/
     config.py           paths, seed, dataset scope, analysis settings
     midi.py             MIDI loading, tempo-aware grids, bar lines, drum classes
@@ -45,6 +44,7 @@ results/                generated summaries and figures (tracked in git)
   dataset/              what the feature table contains
   experiments/          detection per condition and model
   ablation/             detection per feature group
+  error_analysis/       false-positive/negative rates by drummer, style, tempo
 data/                   NOT in git
   groove/               GMD as downloaded (contains info.csv)
   features/             feature table and full predictions
@@ -73,6 +73,10 @@ env/bin/python -m src.run_experiments
 
 ```bash
 env/bin/python -m src.run_ablation
+```
+
+```bash
+env/bin/python -m src.error_analysis
 ```
 
 ```bash

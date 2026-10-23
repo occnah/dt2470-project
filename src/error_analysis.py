@@ -1,6 +1,6 @@
 """
-Qualitative error analysis (WHATS_LEFT.md item #2): where do the models
-actually get it wrong, broken down by drummer, style, and tempo?
+Qualitative error analysis: where do the models actually get it wrong,
+broken down by drummer, style, and tempo?
 
 This does not retrain anything -- it reads the feature table and the full
 held-out predictions already saved by `src.run_experiments`, joins each
